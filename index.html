@@ -5707,5 +5707,1847 @@ try{V23?.rebuild?.()}catch(e){}
 window.__V45={species:rows.length,art:A};
 })();
 </script>
+<script id="ocean-v46-gameplay-integrity">
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V46_READY)return;
+
+  const storage=window.__OCEAN_STORAGE;
+  const safe=(fn,fallback)=>{try{const v=fn();return v===undefined?fallback:v}catch(e){return fallback}};
+  const now=()=>Date.now();
+  const regionId=()=>safe(()=>window.__OCEAN_V16_WORLD?.state?.regionId||'coral_triangle','coral_triangle');
+  const regionRoster=()=>safe(()=>window.__OCEAN_V23?.regions?.[regionId()]?.roster||[],[]);
+  const hasCreature=(id)=>safe(()=>creatures.some(c=>c.sp===id),false);
+  const logFor=(id)=>safe(()=>researchLog.get(id)||{},{});
+
+  /* ---------- Non-visual research ledger ----------
+     Keeps the older researchLog, V17 report state and V24 evidence state coherent.
+     No DOM, CSS, canvas or control changes are made here. */
+  const KEY='ocean_v46_integrity_state';
+  const ledger=safe(()=>JSON.parse(storage?.getItem(KEY)||'null'),null)||{
+    version:1,
+    actions:[],
+    regions:{},
+    antiFarm:{scan:new Set()}
+  };
+  ledger.actions=Array.isArray(ledger.actions)?ledger.actions.slice(-160):[];
+  ledger.regions=ledger.regions&&typeof ledger.regions==='object'?ledger.regions:{};
+  if(!(ledger.antiFarm?.scan instanceof Set)){
+    const prev=Array.isArray(ledger.antiFarm?.scan)?ledger.antiFarm.scan:[];
+    ledger.antiFarm={scan:new Set(prev)};
+  }
+  const saveLedger=()=>safe(()=>storage?.setItem(KEY,JSON.stringify({
+    version:1,actions:ledger.actions.slice(-160),regions:ledger.regions,
+    antiFarm:{scan:[...ledger.antiFarm.scan].slice(-600)}
+  })),null);
+
+  function ensureRegion(rid){
+    if(!ledger.regions[rid])ledger.regions[rid]={species:[],evidence:{scan:0,photo:0,behavior:0,interaction:0},interactions:[],lastActivity:0};
+    return ledger.regions[rid];
+  }
+  function note(type,c,extra={}){
+    if(!c?.sp)return;
+    const rid=regionId(),r=ensureRegion(rid),id=c.sp;
+    const key=`${rid}|${id}|${type}`;
+    if(type==='scan'&&!r.species.includes(id))r.species.push(id);
+    if(type==='scan'&&r.evidence.scan<r.species.length)r.evidence.scan=r.species.length;
+    if(type==='photo'&&!r._photo?.includes(id)){
+      r._photo=r._photo||[];r._photo.push(id);r.evidence.photo=r._photo.length;
+    }
+    if(type==='behavior'&&!r._behavior?.includes(id)){
+      r._behavior=r._behavior||[];r._behavior.push(id);r.evidence.behavior=r._behavior.length;
+    }
+    if(type==='interaction'&&extra.key&&!r.interactions.includes(extra.key)){
+      r.interactions.push(extra.key);r.evidence.interaction=r.interactions.length;
+    }
+    r.lastActivity=now();
+    ledger.actions.push({key,type,region:rid,species:id,at:r.lastActivity,...extra});
+    ledger.actions=ledger.actions.slice(-160);
+    saveLedger();
+  }
+
+  /* ---------- Realistic reef interaction anchors ----------
+     The original game checks for a creature with sp:'coral', but coral is not a creature.
+     Use invisible habitat anchors instead, so the interaction remains gameplay-valid
+     without introducing a new visual object or changing the old UI. */
+  const REEF_PATCHES={
+    coral_triangle:[[-285,-15,120],[-95,85,135],[115,25,125],[230,120,110]],
+    great_barrier:[[-300,0,130],[-60,75,140],[180,40,135],[360,120,115]],
+    maldives_reef:[[-320,20,130],[-80,80,140],[160,35,135],[350,100,120]]
+  };
+  function reefPatchNear(c){
+    const rid=regionId(),nodes=REEF_PATCHES[rid];
+    if(!nodes||!c)return null;
+    let best=null,bd=Infinity;
+    for(const n of nodes){const d=Math.hypot(c.x-n[0],c.y-n[1]);if(d<n[2]&&d<bd){bd=d;best={x:n[0],y:n[1],radius:n[2],distance:d};}}
+    return best;
+  }
+
+  /* ---------- Fix ecological interactions while preserving the existing control flow ---------- */
+  if(typeof window.markEcologicalInteraction==='function'&&!window.markEcologicalInteraction.__v46){
+    window.markEcologicalInteraction=function(c){
+      if(!c)return false;
+      const near=(spid,r)=>safe(()=>creatures.some(o=>o!==c&&o.sp===spid&&Math.hypot(o.x-c.x,o.y-c.y)<r),false);
+      let key='',label='';
+      if((c.sp==='clownfish'||c.sp==='anemone')&&near(c.sp==='clownfish'?'anemone':'clownfish',95)){
+        key='anemone_symbiosis';label='Clownfish ↔ anemone interaction';
+      }else if(c.sp==='cleaner'&&near('grouper',110)){
+        key='cleaning_station';label='Cleaner wrasse ↔ client interaction';
+      }else if((c.sp==='parrotfish'||c.sp==='turtle'||c.sp==='bluetang'||c.sp==='powder_blue_tang')&&reefPatchNear(c)){
+        key='grazing';label='Herbivore grazing interaction';
+      }
+      if(!key||interactionLog.has(key))return false;
+      interactionLog.add(key);
+      const sp=species.find(s=>s.id===c.sp);if(sp){const l=researchLog.get(sp.id)||{};l.interaction=true;l.interactionKey=key;l.lastInteraction=label;researchLog.set(sp.id,l);}
+      researchXP+=20;
+      try{toast(label+' documented • +20 Research XP')}catch(e){}
+      try{updateProgress()}catch(e){}
+      try{advanceStage()}catch(e){}
+      try{saveSlice()}catch(e){}
+      note('interaction',c,{key,label});
+      return true;
+    };
+    window.markEcologicalInteraction.__v46=true;
+    try{markEcologicalInteraction=window.markEcologicalInteraction}catch(e){}
+  }
+
+  /* ---------- Action ledger wrappers ---------- */
+  const wrapOnce=(name,after)=>{
+    const fn=window[name];if(typeof fn!=='function'||fn.__v46wrap)return;
+    const w=function(...args){
+      const before=ledger.actions.length;
+      const xpBefore=(typeof researchXP!=='undefined'&&Number.isFinite(researchXP))?researchXP:null;
+      const out=fn.apply(this,args);
+      try{after(args,out,before,xpBefore)}catch(e){}
+      return out;
+    };
+    w.__v46wrap=true;window[name]=w;
+  };
+
+  wrapOnce('scan',(args,out,before,xpBefore)=>{
+    const c=safe(()=>typeof selected!=='undefined'&&selected?selected:(typeof nearest==='function'?nearest():null),null);
+    if(!c)return;
+    const spid=c.sp,log=logFor(spid),rid=regionId(),fresh=!ledger.antiFarm.scan.has(`${rid}|${spid}`);
+    if(fresh){
+      ledger.antiFarm.scan.add(`${rid}|${spid}`);
+      note('scan',c,{fresh:true});
+    }else{
+      /* The legacy scanner awards +5 XP on repeat confirmation. Keep the confirmation,
+         but remove only that repeat reward. Any separate interaction reward is preserved. */
+      const xpAfter=(typeof researchXP!=='undefined'&&Number.isFinite(researchXP))?researchXP:null;
+      if(xpBefore!==null&&xpAfter!==null&&xpAfter-xpBefore>=5)researchXP=Math.max(0,xpAfter-5);
+      note('scan_repeat',c,{fresh:false});
+    }
+    syncEvidence();
+  });
+
+  wrapOnce('capturePhoto',(args)=>{
+    const c=safe(()=>typeof selected!=='undefined'&&selected?selected:(typeof nearest==='function'?nearest():null),null);if(!c)return;
+    const l=logFor(c.sp);
+    if(l.photo)note('photo',c,{quality:safe(()=>window.qualityFor?.(c),0)});
+    else note('photo',c,{quality:safe(()=>window.qualityFor?.(c),0)});
+    syncEvidence();
+  });
+
+  wrapOnce('markBehavior',(args,out)=>{
+    const c=args[0]||safe(()=>window.selected||window.nearest?.(),null);if(!c||out===false||out===null)return;
+    const l=logFor(c.sp);if(l.behavior)note('behavior',c,{liveMode:safe(()=>window.OceanLivingCore?.mood?.(c),'CALM')});
+    syncEvidence();
+  });
+
+  /* ---------- Keep the educational report model truthful ---------- */
+  function syncEvidence(){
+    const discoveredCount=safe(()=>discovered.size,0);
+    const photoCount=safe(()=>[...researchLog.values()].filter(l=>l.photo).length,0);
+    const behaviorCount=safe(()=>behaviorObserved.size,0);
+    const interactions=safe(()=>interactionLog.size,0);
+    const measurementCount=safe(()=>window.__OCEAN_V24?.state?.evidence?([...window.__OCEAN_V24.state.evidence.values()].reduce((n,e)=>n+(e.measure?1:0),0)):0,0);
+
+    if(window.__OCEAN_V17?.state){
+      const s=window.__OCEAN_V17.state;
+      s.scans=discoveredCount;
+      s.observations=behaviorCount;
+      s.photos=photoCount;
+      s.interactions=interactions;
+      if(Array.isArray(s.measurements))s.measurements=s.measurements; // preserve actual instrument records
+    }
+
+    const v24=window.__OCEAN_V24?.state;
+    if(v24?.evidence instanceof Map){
+      try{
+        for(const [id,l] of researchLog.entries()){
+          const e=v24.evidence.get(id)||{id:false,photo:false,behavior:false,measure:0,repeats:0};
+          e.id=!!l.scan;e.photo=!!l.photo;e.behavior=!!l.behavior;
+          v24.evidence.set(id,e);
+        }
+        v24.records=Array.isArray(v24.records)?v24.records.slice(-60):[];
+      }catch(e){}
+    }
+
+    /* Store a compact region summary for progression/debugging. */
+    const rid=regionId(),r=ensureRegion(rid);
+    r.evidence={scan:r.species.length,photo:(r._photo||[]).length,behavior:(r._behavior||[]).length,interaction:r.interactions.length};
+    r.measurements=measurementCount;
+    saveLedger();
+  }
+
+  /* Reconcile once after every older patch has finished booting, then lightly keep
+     the mirrored educational state current. This does not touch the visual layer. */
+  setTimeout(syncEvidence,800);
+  const timer=setInterval(syncEvidence,2500);
+
+  window.__OCEAN_V46_API={
+    version:'46.0.0',
+    regionState:()=>structuredClone(ensureRegion(regionId())),
+    interactionKeys:()=>safe(()=>[...interactionLog],[]),
+    evidence:()=>({
+      discovered:safe(()=>discovered.size,0),
+      photos:safe(()=>[...researchLog.values()].filter(l=>l.photo).length,0),
+      behaviours:safe(()=>behaviorObserved.size,0),
+      interactions:safe(()=>interactionLog.size,0),
+      xp:safe(()=>typeof researchXP!=='undefined'?researchXP:0,0)
+    }),
+    destroy:()=>clearInterval(timer)
+  };
+  window.__OCEAN_V46_READY=true;
+})();
+</script>
+
+
+<script id="ocean-v47-scientific-reasoning">
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V47_READY||window.__OCEAN_V47_BOOTING)return;
+  window.__OCEAN_V47_BOOTING=true;
+
+  const safe=(fn,fallback)=>{try{const v=fn();return v===undefined?fallback:v}catch(e){return fallback}};
+  const storage=window.__OCEAN_STORAGE;
+  const KEY='ocean_v47_scientific_reasoning_state';
+  const now=()=>Date.now();
+  const finite=(v,f=0)=>Number.isFinite(v)?v:f;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const regionId=()=>safe(()=>window.__OCEAN_V16_WORLD?.state?.regionId||'coral_triangle','coral_triangle');
+  const worldRegion=()=>safe(()=>window.__OCEAN_V16_WORLD?.regions?.[regionId()]||null,null);
+  const speciesById=id=>safe(()=>species.find(s=>s.id===id),null);
+  const currentSubject=()=>safe(()=>typeof selected!=='undefined'&&selected?selected:(typeof nearest==='function'?nearest():null),null);
+  const playerPos=()=>({x:finite(typeof player!=='undefined'?player?.x:0),y:finite(typeof player!=='undefined'?player?.y:0)});
+  const distanceToPlayer=c=>{const p=playerPos();return c?Math.hypot(finite(c.x)-p.x,finite(c.y)-p.y):Infinity};
+
+  const load=()=>safe(()=>{
+    const raw=storage?.getItem(KEY); if(!raw)return null;
+    const j=JSON.parse(raw); return j&&typeof j==='object'?j:null;
+  },null);
+  const stored=load()||{};
+  const state={
+    version:1,
+    sessions:Array.isArray(stored.sessions)?stored.sessions.slice(-120):[],
+    hypotheses:stored.hypotheses&&typeof stored.hypotheses==='object'?stored.hypotheses:{},
+    replications:stored.replications&&typeof stored.replications==='object'?stored.replications:{},
+    patterns:Array.isArray(stored.patterns)?stored.patterns.slice(-80):[],
+    metrics:stored.metrics&&typeof stored.metrics==='object'?stored.metrics:{},
+    active:null,
+    lastActionAt:stored.lastActionAt||0
+  };
+  let dirty=true,lastSave=0;
+  const write=()=>safe(()=>storage?.setItem(KEY,JSON.stringify({
+    version:1,
+    sessions:state.sessions.slice(-120),
+    hypotheses:state.hypotheses,
+    replications:state.replications,
+    patterns:state.patterns.slice(-80),
+    metrics:state.metrics,
+    lastActionAt:state.lastActionAt
+  })),null);
+  const markDirty=()=>{dirty=true};
+  const save=(force=false)=>{
+    dirty=true;
+    const t=now();
+    if(force||t-lastSave>3200){write();lastSave=t;dirty=false;}
+  };
+
+  function observationMode(c){
+    return safe(()=>{
+      const m=String(c?.__v40Mode||window.OceanLivingCore?.state?.get?.(c)?.mode||'unknown').toLowerCase();
+      return m||'unknown';
+    },'unknown');
+  }
+  function observationMood(c){
+    return safe(()=>String(c?.__v40Mood||window.OceanLivingCore?.mood?.(c)||'UNKNOWN').toUpperCase(),'UNKNOWN');
+  }
+  function envSnapshot(){
+    const e=worldRegion()?.env||{};
+    return {
+      temp:Array.isArray(e.temp)?e.temp.slice(0,2):null,
+      salinity:Array.isArray(e.salinity)?e.salinity.slice(0,2):null,
+      clarity:e.clarity??null,
+      light:e.light??null,
+      depth:Array.isArray(e.depth)?e.depth.slice(0,2):null,
+      current:e.current??null
+    };
+  }
+  function subjectSnapshot(c){
+    const sp=speciesById(c?.sp);
+    return {
+      id:c?.sp||null,
+      name:sp?.name||null,
+      latin:sp?.latin||null,
+      expectedBehavior:sp?.behavior||null,
+      expectedEcology:sp?.ecology||null,
+      mode:observationMode(c),
+      mood:observationMood(c),
+      x:finite(c?.x),y:finite(c?.y)
+    };
+  }
+
+  function ensureReplication(rid,sid){
+    const key=`${rid}|${sid}`;
+    if(!Array.isArray(state.replications[key]))state.replications[key]=[];
+    return state.replications[key];
+  }
+
+  function confidenceLabel(score){return score>=0.75?'high':score>=0.48?'medium':score>0?'low':'insufficient'}
+  function confidenceScore(session){
+    if(!session)return 0;
+    let score=0;
+    score += clamp((session.durationMs||0)/9000,0,1)*0.38;
+    score += clamp((session.sampleCount||0)/8,0,1)*0.22;
+    score += clamp(session.consistency||0,0,1)*0.22;
+    score += (session.nonStartledRatio||0)*0.12;
+    score += session.distinctPath?0.06:0;
+    return Number(clamp(score,0,1).toFixed(3));
+  }
+
+  function finalizeObservation(reason='manual'){
+    const a=state.active;
+    if(!a)return null;
+    const c=currentSubject();
+    const duration=now()-a.startedAt;
+    const sameSubject=!!c&&c.sp===a.speciesId&&distanceToPlayer(c)<=190;
+    const samples=a.samples||[];
+    const modes=samples.map(s=>s.mode).filter(Boolean);
+    const counts={}; for(const m of modes)counts[m]=(counts[m]||0)+1;
+    const dominantMode=Object.keys(counts).sort((x,y)=>counts[y]-counts[x])[0]||'unknown';
+    const consistency=modes.length?counts[dominantMode]/modes.length:0;
+    const nonStartledRatio=samples.length?samples.filter(s=>s.mood!=='STARTLED').length/samples.length:0;
+    const pathDistance=a.positions.reduce((sum,p,i)=>i?sum+Math.hypot(p.x-a.positions[i-1].x,p.y-a.positions[i-1].y):0,0);
+    const distinctPath=pathDistance>=40;
+    const session={
+      id:`obs_${a.startedAt}_${a.speciesId}`,
+      region:a.region,
+      speciesId:a.speciesId,
+      startedAt:a.startedAt,
+      endedAt:now(),
+      durationMs:duration,
+      reason,
+      sameSubject,
+      sampleCount:samples.length,
+      dominantMode,
+      modeCounts:counts,
+      consistency:Number(consistency.toFixed(3)),
+      nonStartledRatio:Number(nonStartledRatio.toFixed(3)),
+      distinctPath,
+      depth:finite(a.depth,null),
+      environment:a.environment,
+      confidenceScore:confidenceScore({durationMs:duration,sampleCount:samples.length,consistency,nonStartledRatio,distinctPath}),
+      confidence:null,
+      samples:samples.slice(-20)
+    };
+    session.confidence=confidenceLabel(session.confidenceScore);
+    state.sessions.push(session); state.sessions=state.sessions.slice(-120); markDirty();
+
+    const reps=ensureReplication(session.region,session.speciesId);
+    reps.push({
+      id:session.id,
+      at:session.endedAt,
+      x:finite(a.startX),y:finite(a.startY),
+      durationMs:session.durationMs,
+      dominantMode,
+      confidence:session.confidence,
+      confidenceScore:session.confidenceScore
+    });
+    while(reps.length>12)reps.shift();
+
+    updateHypothesis(session);
+    state.active=null;
+    state.lastActionAt=now();
+    markDirty();
+    save();
+    return session;
+  }
+
+  function updateHypothesis(session){
+    const key=`${session.region}|${session.speciesId}|behavior`;
+    const reps=ensureReplication(session.region,session.speciesId);
+    const usable=reps.filter(r=>r.confidence==='medium'||r.confidence==='high');
+    const modeCounts={}; for(const r of usable)modeCounts[r.dominantMode]=(modeCounts[r.dominantMode]||0)+1;
+    const candidate=Object.keys(modeCounts).sort((a,b)=>modeCounts[b]-modeCounts[a])[0]||session.dominantMode;
+    const candidateCount=modeCounts[candidate]||0;
+    const spatiallyDistinct=(()=>{
+      const pts=usable.filter(r=>Number.isFinite(r.x)&&Number.isFinite(r.y));
+      for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++)if(Math.hypot(pts[i].x-pts[j].x,pts[i].y-pts[j].y)>=60)return true;
+      return false;
+    })();
+    let status='insufficient_evidence';
+    if(candidate!=='unknown'&&candidateCount>=2&&spatiallyDistinct)status='supported_pattern';
+    else if(candidate!=='unknown'&&candidateCount>=1)status='candidate';
+    state.hypotheses[key]={
+      region:session.region,
+      speciesId:session.speciesId,
+      hypothesis:`Observed behaviour is consistent with the ${candidate} behaviour profile recorded by the simulation.`,
+      candidateMode:candidate,
+      status,
+      replicates:usable.length,
+      spatiallyDistinct,
+      updatedAt:now(),
+      note:status==='insufficient_evidence'?'Not enough independent observation to support a behavioural conclusion.':
+           status==='candidate'?'A candidate pattern exists, but independent replication is still needed.':
+           'Repeated observations at separated positions support a simulation-level behavioural pattern; this is not field evidence.'
+    };
+  }
+
+  function beginObservation(){
+    const c=currentSubject(); if(!c?.sp)return;
+    if(state.active)finalizeObservation('new_observation');
+    const p=playerPos();
+    state.active={
+      speciesId:c.sp,
+      region:regionId(),
+      startedAt:now(),
+      startX:p.x,startY:p.y,
+      depth:safe(()=>Number(String(document.getElementById('v5DepthVal')?.textContent||'').match(/-?\d+(?:\.\d+)?/)?.[0]),null),
+      environment:envSnapshot(),
+      samples:[],positions:[],lastSampleAt:0,lastSubjectCheck:now()
+    };
+    state.lastActionAt=now(); markDirty(); save();
+  }
+
+  function sampleObservation(){
+    const a=state.active; if(!a)return;
+    const c=currentSubject();
+    const d=distanceToPlayer(c);
+    if(!c||c.sp!==a.speciesId||d>190){
+      if(now()-a.lastSubjectCheck>1200)finalizeObservation('subject_lost');
+      return;
+    }
+    a.lastSubjectCheck=now();
+    if(now()-a.lastSampleAt<850)return;
+    a.lastSampleAt=now();
+    const p=playerPos();
+    a.positions.push(p);
+    a.samples.push({
+      at:now(),
+      mode:observationMode(c),
+      mood:observationMood(c),
+      distance:Number(d.toFixed(1)),
+      x:finite(c.x),y:finite(c.y)
+    });
+    if(a.samples.length>=18)finalizeObservation('sample_limit');
+  }
+
+  function noteSimpleAction(type,c,extra={}){
+    if(!c?.sp)return;
+    const rid=regionId(),spid=c.sp, key=`${rid}|${spid}`;
+    state.metrics[key]=state.metrics[key]||{scans:0,photos:0,behaviours:0,interactions:0,measurementCount:0};
+    const m=state.metrics[key];
+    if(type==='scan')m.scans++;
+    if(type==='photo')m.photos++;
+    if(type==='behavior')m.behaviours++;
+    if(type==='interaction')m.interactions++;
+    if(type==='photo')m.lastPhotoQuality=finite(extra.quality,0);
+    m.lastAt=now();
+    state.lastActionAt=now();
+    markDirty();
+    save();
+  }
+
+  function wrapFunction(name,handler){
+    const fn=window[name];
+    if(typeof fn!=='function'||fn.__v47wrapped)return;
+    const wrapped=function(...args){
+      const out=fn.apply(this,args);
+      try{handler(args,out)}catch(e){}
+      return out;
+    };
+    wrapped.__v47wrapped=true; window[name]=wrapped;
+    try{globalThis[name]=wrapped}catch(e){}
+  }
+
+  function bindWhenReady(){
+    wrapFunction('scan',(args)=>{
+      const c=currentSubject(); if(c)noteSimpleAction('scan',c);
+    });
+    wrapFunction('capturePhoto',(args)=>{
+      const c=currentSubject(); if(c)noteSimpleAction('photo',c,{quality:safe(()=>window.qualityFor?.(c),0)});
+    });
+    wrapFunction('markBehavior',(args,out)=>{
+      const c=args[0]||currentSubject();if(c&&out!==false&&out!==null){
+        noteSimpleAction('behavior',c);
+      }
+    });
+    wrapFunction('markEcologicalInteraction',(args,out)=>{
+      const c=args[0]||currentSubject();if(c&&out!==false&&out!==null)noteSimpleAction('interaction',c,{key:'existing_interaction'});
+    });
+  }
+
+  /* Observe action is intentionally used only to start a passive observation window.
+     No controls are replaced and the existing click handler is allowed to continue. */
+  document.addEventListener('click',e=>{
+    const id=e.target?.closest?.('#observeBtn')?.id;
+    if(!id)return;
+    const wasObserving=safe(()=>typeof observeMode!=='undefined'&&!!observeMode,false);
+    if(wasObserving){
+      if(state.active)finalizeObservation('manual_stop');
+    }else{
+      beginObservation();
+    }
+  },true);
+
+  /* Photo/scan/behaviour can close an unfinished observation without invalidating the old action. */
+  document.addEventListener('click',e=>{
+    const id=e.target?.closest?.('#photoBtn,#scanBtn')?.id;
+    if(id&&state.active&&now()-state.active.startedAt>1200)finalizeObservation(id==='scanBtn'?'scan_checkpoint':'photo_checkpoint');
+  },true);
+
+  /* ---------- Scientific interpretation of existing measurements ---------- */
+  function collectMeasurements(){
+    const evidence=safe(()=>window.__OCEAN_V24?.state?.evidence,null);
+    const records=safe(()=>window.__OCEAN_V24?.state?.records,[]);
+    const out=[];
+    if(Array.isArray(records)){
+      for(const r of records){
+        if(r?.kind==='experiment'&&r?.id==='light_depth'&&Number.isFinite(r.depth)&&Number.isFinite(r.value))out.push({region:r.region||regionId(),depth:Number(r.depth),value:Number(r.value),at:r.time||r.at||now(),source:'model_experiment'});
+      }
+    }
+    return out;
+  }
+
+  function updatePatterns(){
+    const rows=collectMeasurements();
+    const byRegion={};
+    for(const r of rows)(byRegion[r.region]??=[]).push(r);
+    for(const [rid,list] of Object.entries(byRegion)){
+      const uniq=[]; const seen=new Set();
+      for(const r of list){const k=`${r.depth}|${r.value}`;if(!seen.has(k)){seen.add(k);uniq.push(r)}}
+      if(uniq.length<2)continue;
+      const sorted=uniq.slice().sort((a,b)=>a.depth-b.depth);
+      let decreases=true;
+      for(let i=1;i<sorted.length;i++)if(sorted[i].value>=sorted[i-1].value)decreases=false;
+      state.patterns=state.patterns.filter(p=>!(p.region===rid&&p.id==='light_depth'));
+      state.patterns.push({
+        region:rid,id:'light_depth',n:sorted.length,
+        depths:sorted.map(r=>r.depth),values:sorted.map(r=>r.value),
+        status:decreases?'model_supported_monotonic':'mixed_or_insufficient',
+        interpretation:decreases?'Repeated model measurements are consistent with declining available light as depth increases.':'Repeated model measurements do not form a simple monotonic pattern.',
+        educationalOnly:true,
+        updatedAt:now()
+      });
+    }
+    state.patterns=state.patterns.slice(-80);
+    markDirty();
+  }
+
+  function updateMetrics(){
+    const sessionsByRegion={};
+    for(const s of state.sessions){
+      const k=s.region; (sessionsByRegion[k]??=[]).push(s);
+    }
+    state.metrics.__summary={
+      observationSessions:state.sessions.length,
+      replicatedSubjects:Object.keys(state.replications).length,
+      hypotheses:Object.keys(state.hypotheses).length,
+      supportedPatterns:Object.values(state.hypotheses).filter(h=>h.status==='supported_pattern').length,
+      modelPatterns:state.patterns.length,
+      highConfidenceSessions:state.sessions.filter(s=>s.confidence==='high').length,
+      updatedAt:now()
+    };
+    markDirty();
+  }
+
+  function tick(){
+    sampleObservation();
+    updatePatterns();
+    updateMetrics();
+    if(state.active && now()-state.active.startedAt>=15000)finalizeObservation('time_limit');
+    if(state.lastActionAt && now()-state.lastActionAt>4000&&state.active&&!currentSubject())finalizeObservation('no_subject');
+    save();
+  }
+
+  bindWhenReady();
+  const readyTimer=setInterval(()=>{
+    bindWhenReady();
+    if(window.__OCEAN_V24_READY||window.__OCEAN_V46_READY)updatePatterns();
+  },900);
+  const tickTimer=setInterval(tick,700);
+  setTimeout(()=>{updatePatterns();updateMetrics();save();},1200);
+
+  window.__OCEAN_V47_API={
+    version:'47.0.0',
+    status:()=>({active:!!state.active,region:regionId(),species:state.active?.speciesId||null}),
+    currentObservation:()=>safe(()=>structuredClone(state.active),null),
+    observations:()=>safe(()=>structuredClone(state.sessions.slice(-40)),[]),
+    hypothesis:(rid,sid)=>safe(()=>structuredClone(state.hypotheses[`${rid}|${sid}|behavior`]||null),null),
+    replications:(rid,sid)=>safe(()=>structuredClone(ensureReplication(rid||regionId(),sid)),[]),
+    patterns:()=>safe(()=>structuredClone(state.patterns.slice(-40)),[]),
+    summary:()=>safe(()=>structuredClone(state.metrics.__summary||{}),{}),
+    resetActive:()=>{if(state.active)finalizeObservation('manual_reset');},
+    destroy:()=>{clearInterval(readyTimer);clearInterval(tickTimer);save(true);window.__OCEAN_V47_READY=false;}
+  };
+  window.__OCEAN_V47_READY=true;
+  window.__OCEAN_V47_BOOTING=false;
+})();
+</script>
+
+<script id="ocean-v48-biology-expansion">
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V48_READY||window.__OCEAN_V48_BOOTING)return;
+  window.__OCEAN_V48_BOOTING=true;
+
+  /*
+   OCEAN EXPLORER V48 · BIOLOGY KNOWLEDGE EXPANSION
+   Data-only enrichment layer. No DOM, CSS, canvas or input handlers are created here.
+   Existing species/region renderers automatically read the richer fields.
+   Scientific emphasis: morphology → behaviour → physiology → food web → life history → conservation.
+  */
+  const species=window.__OCEAN_V23?.species || window.species || [];
+  const byId=new Map(species.map(s=>[s.id,s]));
+  const add=(id,extra)=>{
+    const s=byId.get(id); if(!s)return;
+    for(const k of ['fact','behavior','adapt','ecology','reproduction','conservation']){
+      if(extra[k])s[k]=String(s[k]||'').trim()+' '+extra[k];
+    }
+    if(extra.sourceAdd)s.source=String(s.source||'').trim()+' · '+extra.sourceAdd;
+    s.v48BiologyDepth='expanded';
+  };
+
+  const F={
+    clownfish:{
+      fact:'Males and females have the familiar orange-and-white pattern, but the species is also identified by fin-ray and stripe details. Field identification should be paired with host-anemone context rather than colour alone.',
+      behavior:'Breeding pairs maintain a small territory around the host anemone. Males commonly guard and fan the demersal eggs, improving oxygenation and reducing fouling.',
+      adapt:'A mucus layer changes the fish’s interaction with the anemone’s nematocysts. Social rank is size-based, with the largest fish functioning as female and the next largest as breeding male.',
+      ecology:'The fish gains shelter from the anemone while its movements, waste and defensive behaviour can contribute nutrients or protection around the host. This is a useful case for studying symbiosis as an interaction with costs and benefits rather than a simple “friendship.”',
+      reproduction:'The species is protandrous: individuals begin life as males and can transition to female when the dominant female disappears. Eggs are attached to nearby hard substrate and hatch after several days, with males providing parental care.',
+      conservation:'For field work, the most informative observation is often the relationship itself: host identity, territory size, pair structure and egg-guarding behaviour. Avoid touching anemones because physical damage can affect both partners.',
+      sourceAdd:'FishBase · Amphiprion ocellaris biology and life history'
+    },
+    bumphead_v22:{
+      fact:'The enlarged forehead and fused beak-like teeth are characteristic of a very large scarine parrotfish. Individuals can produce distinctive grazing scars on carbonate substrate that are useful field evidence of feeding.',
+      behavior:'Adults often graze along reef surfaces rather than simply “eating coral.” Repeated bites can remove algae and some of the underlying substrate, so an observer should distinguish scraping, biting and resting.',
+      adapt:'Heavy jaws and pharyngeal teeth help process tough algal-covered reef material. Large body size also provides a strong swimming and feeding advantage in surge-exposed reef habitat.',
+      ecology:'By removing algal biomass and generating carbonate sediment during digestion, large parrotfishes can influence competition between algae and reef-building organisms and contribute to reef sediment production.',
+      reproduction:'Reproduction is by external fertilization with eggs and sperm released into the water. Spawning may occur in aggregation settings, making location and group density useful research observations.',
+      conservation:'Because large-bodied parrotfish can take years to reach full size, size structure matters as much as presence/absence when evaluating a reef fish community.',
+      sourceAdd:'FishBase · Bolbometopon muricatum ecology and reproduction'
+    },
+    humphead_v22:{
+      fact:'Adult humphead wrasse are among the largest reef fishes and have a prominent thick-lipped head profile. Juveniles can use coral-rich lagoon habitats that differ from adult reef-slope habitat.',
+      behavior:'Adults are usually solitary and active by day, moving across structured reef habitat and using caves or ledges for shelter at night. Feeding observations may include molluscs, crustaceans, sea urchins and other reef animals.',
+      adapt:'Large jaws and thick lips allow strong suction and manipulation of hard-bodied prey. Behavioural flexibility lets the fish move among caves, reef slopes and lagoons as habitat and prey availability change.',
+      ecology:'It is a high-level reef predator and one of the better examples in the game for asking how predator identity can influence lower trophic levels. Its ability to consume difficult or toxic prey also gives it an unusual ecological role.',
+      reproduction:'The species is oviparous and sexes are not simply fixed through the entire social life history; protogynous sex change has been documented. Distinct spawning pairs and seasonal reproductive behaviour make social context important.',
+      conservation:'The species is particularly vulnerable to removal of large adults. A useful scientific observation is therefore size structure and abundance, not merely whether one individual is present.',
+      sourceAdd:'FishBase · Cheilinus undulatus, updated biology and 2024 global assessment reference'
+    },
+    blacktip_v22:{
+      fact:'The dark tips on several fins are a useful visual clue, but body shape, fin position and habitat context are also needed for reliable identification.',
+      behavior:'These sharks often patrol shallow reef flats, channels and lagoon edges. Juveniles can use very shallow protected habitat, so a transect that samples habitat zones can reveal age-related spatial patterns.',
+      adapt:'Electroreception supplements vision and smell when prey are hidden or visibility is poor. A streamlined body and heterocercal tail support efficient cruising and rapid acceleration.',
+      ecology:'As a meso- to upper-level predator, blacktip reef sharks can affect prey behaviour even when they are not actively feeding. This makes predator presence a potentially important observation variable.',
+      reproduction:'Embryos develop internally and pups are born live. Reproductive output is lower than in many small teleost fishes, so loss of mature adults can have disproportionate population effects.',
+      conservation:'For a field study, distance, swimming path and habitat use are more informative and safer than approaching closely. Repeated sightings should be recorded as individual encounters rather than assumed to represent unique sharks.',
+      sourceAdd:'FishBase · Carcharhinus melanopterus biology'
+    },
+    potato_cod_gbr:{
+      fact:'Potato cod are large grouper-like predators with a broad head and cavernous mouth suited to suction feeding. Spot patterning becomes a useful secondary field clue once body shape is recognised.',
+      behavior:'They often remain near caves, drop-offs and other structural refuges, then make short ambush movements. A calm individual near shelter should not automatically be classified as resting; prey inspection and territorial spacing are alternatives.',
+      adapt:'The large mouth and robust body create a strong pressure differential during suction feeding. Occupying caves and reef breaks provides both a launch point for ambush and protection from strong flow.',
+      ecology:'Large groupers can structure reef food webs by consuming fishes and other predators or competitors. Their occurrence can therefore be used as one component of a community-level predator survey.',
+      reproduction:'Groupers generally release eggs and sperm into the water column, and reproductive success can depend on seasonal aggregation and current-driven dispersal of larvae.',
+      conservation:'Large-bodied, slow-growing reef predators are sensitive to sustained fishing pressure. Monitoring should include size distribution and spawning-season behaviour where possible.',
+      sourceAdd:'FishBase · Epinephelus tukula; Great Barrier Reef regional resources'
+    },
+    epaulette_gbr:{
+      fact:'The epaulette shark has a distinctive ocellated pattern and unusually strong pectoral and pelvic fins that it uses against the seabed.',
+      behavior:'It can “walk” over shallow reef flats with alternating fin movements, a behaviour worth observing over several seconds because short snapshots may miss the locomotor pattern.',
+      adapt:'The species tolerates severe short-term hypoxia better than many reef fishes, helping it exploit shallow pools that can become oxygen-poor as they are isolated by tides.',
+      ecology:'Its ability to forage in very shallow habitat gives it access to small benthic prey that may be unavailable to larger pelagic predators.',
+      reproduction:'It lays eggs in protective egg cases that attach to reef substrate. Egg-case location and habitat can therefore be recorded without disturbing adults.',
+      conservation:'Shallow reef specialists are vulnerable to habitat modification even when adult abundance appears locally stable. Habitat condition should be recorded alongside sightings.',
+      sourceAdd:'FishBase · Hemiscyllium ocellatum physiology and life history'
+    },
+    bluefin_v22:{
+      fact:'Pacific bluefin tuna are highly streamlined, with a large caudal peduncle and finlets that support sustained high-speed swimming. Size classes can occupy different habitats across the Pacific.',
+      behavior:'Individuals and schools can travel very long distances, and tagging has documented movements between the western and eastern Pacific in some fish. A “pelagic corridor” observation should therefore be treated as a movement event, not a fixed home range.',
+      adapt:'Regional endothermy and vascular heat exchange help retain metabolic heat in swimming muscles and other tissues. This supports prolonged aerobic activity in cooler water than many tropical fishes tolerate.',
+      ecology:'Bluefin link schooling forage fishes and cephalopods to higher trophic levels. Because they move across jurisdictional boundaries, their ecology is best understood at ocean-basin scale.',
+      reproduction:'Spawning occurs in warm western Pacific waters, with migration between feeding and spawning regions. Larvae are pelagic, so currents become important to recruitment.',
+      conservation:'Population interpretation must be stock- and assessment-specific; the game should teach that a highly migratory species cannot be evaluated from one reef or one coastline alone.',
+      sourceAdd:'NOAA Fisheries · Pacific Bluefin Tuna biology and migration'
+    },
+    yellowfin_v22:{
+      fact:'Yellowfin are identifiable by their long yellow dorsal and anal fins and yellow lateral stripe. Their streamlined body is built for sustained pelagic swimming.',
+      behavior:'Adults are active predators that can associate with schools of other pelagic fishes and floating structures. Juveniles may school near the surface before changing habitat with size.',
+      adapt:'A counter-current vascular heat-exchange system helps maintain elevated muscle temperature during sustained swimming. This is a good species for testing the hypothesis that morphology reflects locomotor demand.',
+      ecology:'Yellowfin connect small schooling prey, cephalopods and crustaceans to higher trophic levels and are themselves prey of large predators during earlier life stages.',
+      reproduction:'They spawn repeatedly in warm tropical and subtropical waters, with females releasing very large numbers of eggs. Recruitment therefore depends on survival through a highly dispersive planktonic stage.',
+      conservation:'Stock status differs among assessment regions. Scientific reporting should always name the stock and assessment year instead of treating “yellowfin tuna” as one globally uniform population.',
+      sourceAdd:'NOAA Fisheries · Pacific Yellowfin Tuna biology and stock assessments'
+    },
+    bigeye_v22:{
+      fact:'Large eyes are a useful identification clue because bigeye regularly forage deeper and in dimmer water than many surface-oriented tunas.',
+      behavior:'Small fish may school near the surface, while larger bigeye make repeated vertical movements into deeper water. A depth-resolved observation can therefore reveal behaviour that a surface-only survey would miss.',
+      adapt:'Large eyes improve visual sensitivity in low light, while tuna heat-exchange physiology supports active swimming across a wide depth range.',
+      ecology:'Bigeye feed on fish, crustaceans and squid and can occupy a high trophic position. They also interact with floating structures and other large pelagic animals where prey aggregate.',
+      reproduction:'Spawning can occur throughout the year in tropical waters, with floating eggs carried near the surface by currents until hatching.',
+      conservation:'Highly migratory tuna are assessed as stocks rather than as a single local population. The game should encourage region + season + size-class metadata whenever possible.',
+      sourceAdd:'NOAA Fisheries · Pacific Bigeye Tuna biology and habitat'
+    },
+    skipjack_v22:{
+      fact:'Skipjack have a distinctive dark-blue back and several longitudinal dark bands on the lower sides. Their compact, streamlined body is built for active schooling.',
+      behavior:'They are fast, opportunistic pelagic predators and may school with other tropical tunas when body size is similar.',
+      adapt:'Dense muscle mass and heat-exchange vessels support sustained swimming. Schooling can reduce search cost for prey and may dilute individual predation risk.',
+      ecology:'They consume fishes, crustaceans and cephalopods and are prey for billfish, sharks and larger tunas. Their position makes them a useful connector between mid-trophic prey and larger pelagic predators.',
+      reproduction:'In tropical waters skipjack can spawn frequently, and eggs hatch rapidly. High reproductive output is balanced by heavy mortality during early life stages.',
+      conservation:'Because abundance estimates are influenced by schooling and movement, catch and survey data need careful interpretation at the stock level.',
+      sourceAdd:'NOAA Fisheries · Pacific Skipjack Tuna biology'
+    },
+    whaleshark_v22:{
+      fact:'Whale sharks can be identified from the checkerboard-like spot pattern, broad flattened head and very large mouth. Spot patterns are individually distinctive enough to support photo-identification studies.',
+      behavior:'They often alternate long-distance travel with predictable visits to plankton-rich areas. Slow cruising near the surface is not evidence of immobility; feeding state and current direction should be recorded separately.',
+      adapt:'Filter-feeding anatomy allows enormous volumes of water to pass through the mouth while prey are retained. A large liver and efficient swimming economy support long migrations.',
+      ecology:'Whale sharks connect planktonic production with megafaunal biomass and can aggregate where seasonal productivity is high.',
+      reproduction:'They are ovoviviparous, with embryos developing inside eggs retained in the mother before live birth. Reproductive rates are slow relative to many fishes.',
+      conservation:'Their large size and long movements make them vulnerable to vessel interactions, fisheries bycatch and targeted fishing. Photo-ID and non-invasive observation are valuable research methods.',
+      sourceAdd:'NOAA Fisheries / FishBase · Rhincodon typus biology'
+    },
+    oceanic_whitetip_v22:{
+      fact:'The rounded white or pale tips on the broad first dorsal and pectoral fins help distinguish this shark from several other pelagic requiem sharks.',
+      behavior:'It patrols open-ocean and offshore reef waters, often maintaining slow, efficient cruising. Social aggregations can occur around productive features, but a single sighting does not demonstrate schooling.',
+      adapt:'Broad rounded fins provide lift and manoeuvrability during low-speed cruising. Highly developed sensory systems help locate mobile prey over large spatial scales.',
+      ecology:'As a high-level pelagic predator it links tuna, cephalopods and other large prey to the upper ocean food web.',
+      reproduction:'Young develop internally and females give birth to live pups. Low reproductive output means adult survival strongly influences population recovery.',
+      conservation:'The species has been heavily affected by fishing pressure in many regions. A scientific survey should treat encounter rate, size and fishing interaction separately rather than using presence alone.',
+      sourceAdd:'NOAA Fisheries / FishBase · Carcharhinus longimanus biology'
+    },
+    garibaldi_v22:{
+      fact:'Garibaldi are large, bright orange damselfish of the eastern Pacific. The uniform colour and rounded body are useful for field identification, but age and habitat should also be recorded.',
+      behavior:'Adults defend territories strongly, while nesting males tend and guard eggs attached to rocky substrate. Territorial boundaries can be studied by mapping repeated patrol routes.',
+      adapt:'Strong jaws and teeth allow grazing on algae and consumption of small invertebrates. Defensive aggression helps protect a small feeding and spawning area.',
+      ecology:'As a territorial omnivore, garibaldi influence algal cover and small invertebrate communities on rocky reefs. They are a good species for studying how behaviour modifies habitat at a small spatial scale.',
+      reproduction:'Males clear and prepare a nest site, females deposit adhesive eggs, and males guard the developing embryos until hatching.',
+      conservation:'Local populations depend on healthy rocky reef habitat and relatively intact territorial structure; careful observation should avoid intruding into nesting areas.',
+      sourceAdd:'NOAA / California rocky reef resources · Hypsypops rubicundus'
+    },
+    kelpbass_v22:{
+      fact:'Kelp bass are laterally compressed reef fishes whose coloration can vary with habitat and context. Their jaw structure is suited to a sit-and-strike predatory lifestyle.',
+      behavior:'Adults often hold position around kelp fronds, rocky structure and cover, then make short attacks on passing prey. Repeated station-keeping can be differentiated from active patrolling by movement records.',
+      adapt:'A flexible body and rapid acceleration allow ambushes in dense three-dimensional kelp habitat where continuous high-speed travel would be inefficient.',
+      ecology:'They consume fishes and mobile invertebrates and occupy an intermediate-to-high trophic position in kelp-forest communities.',
+      reproduction:'Spawning is seasonal in many populations, with pelagic eggs and larvae that disperse with currents before settlement.',
+      conservation:'Local abundance is shaped by habitat complexity, fishing and changing kelp conditions; surveys benefit from separating canopy, midwater and bottom observations.',
+      sourceAdd:'FishBase / NOAA kelp-forest ecosystem resources'
+    },
+    kelprockfish_v22:{
+      fact:'Kelp rockfish have an elongated body and mottled colour pattern suited to rocky and kelp-covered habitat. Juvenile and adult habitat associations can differ.',
+      behavior:'They commonly hover among kelp and rocky cover, feeding on plankton and small fishes or invertebrates. Current strength can change their station-keeping behaviour.',
+      adapt:'Fine pectoral-fin control helps maintain position in variable flow, while cryptic patterning reduces contrast against kelp and rock.',
+      ecology:'As a mid-level predator, kelp rockfish transfer plankton- and small-prey production upward while also serving as prey for larger fishes and marine mammals.',
+      reproduction:'Females retain fertilized embryos and give birth to live larvae. Reproductive timing and juvenile survival can strongly affect year-class strength.',
+      conservation:'Age structure and recruitment are important because long-lived rockfishes can show delayed population response to disturbance.',
+      sourceAdd:'FishBase · Sebastes atrovirens ecology and reproduction'
+    },
+    leopardshark_v22:{
+      fact:'The leopard shark has distinctive dark saddles and spots over a slender body, making pattern photography useful for identification.',
+      behavior:'It often uses shallow bays, estuaries and sandy-bottom habitat and may form seasonal aggregations. Repeated visits to the same sheltered areas make it suitable for mark-recapture style observation concepts.',
+      adapt:'A slender body and sensitive electroreception support benthic foraging. Its close association with productive shallow habitats exposes it to coastal environmental change.',
+      ecology:'It consumes benthic invertebrates, fishes and other prey, connecting sedimentary food webs to larger coastal predators.',
+      reproduction:'Embryos develop internally and females give birth to live young after a relatively long gestation. Shallow nursery areas are important to early life stages.',
+      conservation:'Coastal sharks can be affected by fishing, habitat modification and nursery disturbance. Record habitat type and life stage with every sighting.',
+      sourceAdd:'NOAA West Coast / FishBase · Triakis semifasciata'
+    },
+    giant_seabass_v23:{
+      fact:'Giant sea bass are massive, slow-moving serranids with a broad head and mottled body. Juveniles use shallower nursery habitat while adults can occupy deeper rocky areas.',
+      behavior:'They often remain near structure and make short ambush movements. Because activity can be subtle, observation time is more informative than a single frame.',
+      adapt:'A large gape and powerful suction-feeding apparatus allow rapid capture of prey at close range. Large body size also permits them to handle relatively large prey.',
+      ecology:'This is a high-level coastal predator linking reef fishes and larger invertebrates to the upper food web. Recovery monitoring benefits from size and maturity data as well as abundance.',
+      reproduction:'Spawning aggregations occur seasonally and pelagic eggs disperse after external fertilization. Aggregation sites can be important conservation units.',
+      conservation:'Historical overfishing caused severe declines. For this species, documenting large adults and spawning behaviour is scientifically more informative than simply counting any individual.',
+      sourceAdd:'NOAA National Marine Sanctuaries / FishBase · Stereolepis gigas'
+    },
+    herring_v22:{
+      fact:'Atlantic herring are laterally compressed schooling fish whose silvery sides and deeply forked tail fit fast pelagic movement. Age and size class affect schooling depth and distribution.',
+      behavior:'Dense schools can contract or expand rapidly in response to predators, light and hydrographic structure. A survey should record school position and approximate density rather than a single fish count.',
+      adapt:'A streamlined body and coordinated schooling behaviour reduce drag and improve predator detection. Fine gill-raker structures support efficient zooplankton capture.',
+      ecology:'Herring are a classic forage species: they consume zooplankton and larvae and are prey for cod, seabirds, sharks and marine mammals. Their abundance can transfer productivity across many trophic levels.',
+      reproduction:'Spawning occurs seasonally and eggs are demersal, adhering to gravel or other suitable seabed. Successful recruitment therefore depends on both adult stock and spawning-ground condition.',
+      conservation:'Fishery monitoring uses abundance, age structure and spawning information. Presence alone is not an estimate of stock health.',
+      sourceAdd:'NOAA Fisheries · Atlantic Herring ecosystem role'
+    },
+    cod_v22:{
+      fact:'Atlantic cod have a clear lateral line and chin barbel, both useful field-identification features. Body colour can change with local substrate and depth.',
+      behavior:'They forage near the bottom and can shift between rocky structure and deeper feeding grounds as prey and temperature change.',
+      adapt:'The chin barbel and lateral line provide sensory information close to the seabed. A large mouth and strong suction feeding support capture of fishes and invertebrates.',
+      ecology:'Cod are major predators in shelf food webs and can transmit changes in forage-fish and benthic invertebrate abundance upward to the predator community.',
+      reproduction:'Cod spawn near the seabed, with large females producing millions of buoyant eggs. Larvae then drift in the plankton before juvenile settlement.',
+      conservation:'Long-lived adults and age structure matter for resilience. Scientific monitoring therefore combines abundance with size, age and spawning-ground information.',
+      sourceAdd:'NOAA Fisheries · Atlantic Cod biology'
+    },
+    haddock_v22:{
+      fact:'The dark lateral-line region and distinctive black shoulder spot are useful identification clues. Haddock are usually associated with soft or coarse shelf sediments rather than complex coral-like structure.',
+      behavior:'They feed close to the bottom and can use sand, gravel and pebble habitats. Juveniles spend time higher in the water column before settling.',
+      adapt:'Sensitive barbels and bottom-oriented sensory behaviour help locate worms, molluscs and crustaceans in sediment. Body shape supports repeated near-bottom cruising.',
+      ecology:'Haddock link benthic invertebrates to larger fishes and marine mammals. Their distribution is influenced by both prey availability and seabed type.',
+      reproduction:'Fertilized eggs rise into the water column and drift with currents; newly hatched larvae remain near the surface for a period before settling.',
+      conservation:'Survey design should sample seabed habitat as well as fish abundance because bottom type is an important determinant of distribution.',
+      sourceAdd:'NOAA Fisheries · Haddock biology and habitat'
+    },
+    polar_cod_v22:{
+      fact:'Polar cod are small Arctic fishes adapted to life in very cold water and are closely tied to sea-ice and shelf environments during parts of their life cycle.',
+      behavior:'They can aggregate near the underside of sea ice or in shelf waters where plankton is concentrated. Their distribution can change quickly with ice, temperature and prey.',
+      adapt:'Antifreeze proteins and cold-adapted membrane chemistry help prevent physiological damage at subzero temperatures. The body also stores lipids that support winter survival.',
+      ecology:'Polar cod are a key transfer species between zooplankton and higher Arctic predators including seabirds, seals and larger fishes.',
+      reproduction:'Spawning occurs seasonally in cold shelf waters; early life stages are pelagic and depend strongly on timing between larval production and plankton availability.',
+      conservation:'Because the species links sea-ice production with higher trophic levels, it is particularly informative for observing ecological effects of changing ice conditions.',
+      sourceAdd:'FishBase / NOAA Arctic resources · Boreogadus saida'
+    },
+    arctic_cod_v22:{
+      fact:'Arctic cod is distinct from polar cod despite their similar names; morphology, range and ecology should be checked before combining observations.',
+      behavior:'It is a cold-water benthopelagic fish that can forage on shelf and deeper Arctic habitats depending on prey distribution.',
+      adapt:'Cold-adapted physiology and a body suited to both bottom and midwater feeding allow flexible use of Arctic shelf habitat.',
+      ecology:'It consumes small crustaceans and zooplankton and transfers cold-water production toward seals, seabirds and larger fishes.',
+      reproduction:'Reproduction is seasonal and pelagic larval stages make timing with plankton blooms particularly important.',
+      conservation:'Separating Arctic cod from polar cod in field records is scientifically important because the two species can occupy overlapping cold-water environments.',
+      sourceAdd:'FishBase · Arctogadus glacialis species record'
+    },
+    toothfish_v22:{
+      fact:'Antarctic toothfish are large notothenioid fishes with a long-lived life history; maximum reported ages can approach four decades in FishBase records.',
+      behavior:'They occupy deep shelf and slope habitats and can move vertically between depth zones while foraging. Depth metadata is therefore essential to interpret sightings.',
+      adapt:'Antifreeze glycoproteins and cold-adapted physiology allow function in near-freezing Southern Ocean water. A swim bladder is absent in notothenioids, with buoyancy supported by body lipids and skeletal adaptations.',
+      ecology:'They are major predators on Antarctic fishes and cephalopods and are themselves important prey for larger predators such as seals and orcas.',
+      reproduction:'Maturity is relatively late and larval development includes a prolonged pelagic phase. Long generation time makes recovery from heavy mortality slow.',
+      conservation:'Long-lived deep-water predators require careful stock assessment because local catch can remove a large amount of accumulated biomass. Depth, size and age information greatly improve interpretation.',
+      sourceAdd:'FishBase · Dissostichus mawsoni ecology and life history'
+    },
+    icefish_v23:{
+      fact:'Blackfin icefish belong to the Channichthyidae, a remarkable Antarctic lineage. They lack functional haemoglobin and red blood cells, relying on cold, oxygen-rich seawater and circulatory adaptations.',
+      behavior:'They are demersal predators that hold close to rocky bottom habitat and feed on fishes and krill. Their low oxygen-carrying capacity makes environmental context especially important when interpreting activity.',
+      adapt:'An enlarged heart, broad vessels, thin blood and high-capillary tissues help move oxygen without haemoglobin. Their pale body is also a useful field clue in clear Antarctic water.',
+      ecology:'Icefish transfer krill and small-fish production toward higher Antarctic predators and are part of a food web strongly structured by seasonality and sea-ice processes.',
+      reproduction:'Spawning is synchronous and larvae have a pelagic phase before settlement. Recruitment is therefore linked to currents and seasonal food availability.',
+      conservation:'Southern Ocean fisheries and ecosystem shifts can affect demersal notothenioid communities; monitoring should combine abundance with depth, temperature and habitat type.',
+      sourceAdd:'FishBase · Chaenocephalus aceratus'
+    },
+    atlantic_mackerel_v23:{
+      fact:'Atlantic mackerel are streamlined, schooling pelagic fishes with dark wavy bands on the back. They can be aged from otoliths, making them useful for teaching how field biology connects to population assessment.',
+      behavior:'Seasonal migrations connect spawning and feeding grounds, and distribution changes through the year. A 2026 NOAA research initiative is explicitly examining spawning seasonality and population dynamics.',
+      adapt:'A torpedo-shaped body, finlets and strong swimming musculature support efficient long-distance movement. Schooling also helps exploit patchy plankton prey.',
+      ecology:'Mackerel feed heavily on copepods, krill and shrimp while also taking squid and small fish, linking planktonic production to larger predators.',
+      reproduction:'Females spawn in batches during the season; floating eggs drift near the surface before hatching. Timing varies among regional spawning components.',
+      conservation:'Stock interpretation is region-specific. Current research highlights remaining uncertainty in spawning seasonality, illustrating that “known biology” still contains active research questions.',
+      sourceAdd:'NOAA Fisheries · Atlantic Mackerel biology and 2026 spawning-seasonality research'
+    }
+  };
+
+  for(const [id,extra] of Object.entries(F))add(id,extra);
+
+  /* Regional biology: deepen the existing region note/lesson fields only. */
+  const regional={
+    coral_triangle:{
+      note:'Western Pacific coral-reef community: biodiversity emerges from tight connections among reef crest, slope, lagoon, seagrass and reef rubble. Reef fish diversity, distribution, abundance and size can be monitored as ecological indicators; habitat complexity and grazing help shape what species can persist.',
+      lesson:'Scientific focus: symbiosis, grazing and habitat structure. Compare herbivore activity with algal cover, predator presence and reef microhabitat instead of treating biodiversity as a simple species checklist.'
+    },
+    great_barrier:{
+      note:'The Great Barrier Reef is a large connected system of coral reefs, continental-shelf features, mangroves and seagrass. Its biodiversity and ecosystem function depend on connectivity among habitats, water quality, seasonal productivity and the structure of reef fish communities.',
+      lesson:'Scientific focus: reef–seagrass connectivity, grazing, nursery habitat and water-quality effects. Seagrass is especially important because it supports dugongs, turtles and herbivorous fishes.'
+    },
+    central_pacific:{
+      note:'The central Pacific is a pelagic system in which currents, fronts, temperature and productivity determine where prey concentrate. Highly migratory tuna, sharks, rays and other predators can cross enormous distances, so local observations are best interpreted as snapshots within a moving oceanographic system.',
+      lesson:'Scientific focus: migration corridors, predator–prey structure and depth-dependent habitat. Record depth, water conditions and group structure whenever possible.'
+    },
+    california_current:{
+      note:'The California Current is a highly productive eastern North Pacific ecosystem. Seasonal upwelling brings cold, nutrient-rich water toward the surface, supporting plankton and forage species that feed fishes, seabirds and marine mammals; kelp forests add complex three-dimensional habitat.',
+      lesson:'Scientific focus: upwelling → productivity → food-web response. A classic interaction chain is sea otter–urchin–kelp, but the strength of that relationship varies with predators, ocean conditions and local habitat.'
+    },
+    north_atlantic:{
+      note:'Temperate North Atlantic shelf ecosystems are strongly seasonal. Plankton production, herring and other forage fish, benthic invertebrates, groundfish and marine mammals form connected food webs whose distribution changes with temperature, currents and spawning cycles.',
+      lesson:'Scientific focus: seasonal productivity, forage-fish abundance and shelf habitat. Survey design should separate water-column observations from seabed communities because different species occupy different physical layers.'
+    },
+    arctic_shelf:{
+      note:'Arctic shelf ecosystems are strongly controlled by sea ice, light, nutrient supply and seasonality. Ice algae and phytoplankton form the primary-production base, while small cold-adapted fishes transfer this energy to seals, seabirds and larger predators.',
+      lesson:'Scientific focus: timing matters. A change in ice break-up can alter light and primary production, but the ecological response is regionally variable and can include mismatches between plankton and consumers.'
+    },
+    antarctic_peninsula:{
+      note:'The Antarctic Peninsula sits within a Southern Ocean continuum shaped by sea ice, biogeochemical conditions and the Antarctic Circumpolar Current. Krill form a central energy pathway, connecting phytoplankton and ice-associated production to penguins, seals, fishes and whales.',
+      lesson:'Scientific focus: krill-centred food webs, seasonal sea ice and physical connectivity. Compare open-water and ice-edge observations because the same region can support different food-web pathways through the year.'
+    },
+    maldives_reef:{
+      note:'Maldives reef ecosystems are shaped by shallow coral platforms, reef slopes, lagoons and channels in the tropical western Indian Ocean. Strong water movement can concentrate plankton and create cleaning or feeding sites used by reef fishes, rays and visiting pelagic animals.',
+      lesson:'Scientific focus: reef structure, symbiosis, cleaning interactions and connectivity between shallow reef habitat and the open ocean. Distinguish station-keeping, cleaning, feeding and transit when observing visitors.'
+    }
+  };
+  const V21REG=window.__OCEAN_V23?.regions || null;
+  const WORLD=window.__OCEAN_V16_WORLD;
+  if(WORLD?.regions){
+    for(const [id,e] of Object.entries(regional)){
+      if(WORLD.regions[id]){
+        WORLD.regions[id].lesson=e.lesson;
+        WORLD.regions[id].biologyDepth='expanded';
+      }
+    }
+  }
+  /* V23 region objects back the existing regional field reference. */
+  try{
+    const direct=window.__OCEAN_V23?.regions||{};
+    for(const [id,e] of Object.entries(regional)){if(direct[id]){direct[id].note=e.note;direct[id].lesson=e.lesson;direct[id].biologyDepth='expanded';}}
+  }catch(e){}
+
+  /* Expand the existing ocean-scale biology cards through the already-exposed V21 object. */
+  const oceans=window.__OCEAN_V21?.oceanBiology;
+  const oceanExtra={
+    pacific:{
+      subtitle:'Largest ocean basin · tropical reefs, temperate shelves, marginal seas and deep pelagic zones',
+      biology:'The Pacific contains extreme habitat gradients from shallow coral reefs to very deep waters. Reef fish communities respond to temperature, currents, nutrients, habitat complexity and human pressures, while open-ocean predators can migrate across basin-scale distances.',
+      science:'Wind-driven circulation, thermohaline processes, fronts, upwelling and seafloor geology alter where production and prey are concentrated. A single observation is therefore best interpreted with depth, location and oceanographic context.'
+    },
+    atlantic:{
+      subtitle:'North–south circulation · productive shelves · strong seasonal and migratory contrasts',
+      biology:'North Atlantic shelf ecosystems are driven by seasonal plankton production and physical processes that redistribute heat, nutrients and prey. Herring, mackerel, cod and haddock occupy different trophic and habitat roles, while seabirds and marine mammals integrate signals across the food web.',
+      science:'Scientists combine temperature, salinity, plankton, fish eggs, larvae and abundance surveys to understand productivity and stock dynamics. The same species can change distribution with season and hydrography.'
+    },
+    indian:{
+      subtitle:'Monsoon-driven circulation · warm tropical waters · coral reef and open-ocean connectivity',
+      biology:'The Indian Ocean couples tropical reef systems with seasonal monsoon forcing and strong boundary currents. Reef habitats support diverse fish and symbioses, while the western Indian Ocean includes productive channels and open-water visitors that move between habitats.',
+      science:'Seasonally reversing circulation, upwelling and the Indonesian Throughflow alter nutrient delivery and plankton production. Reef observations are therefore most informative when paired with current, temperature and depth context.'
+    },
+    arctic:{
+      subtitle:'Sea ice · strong seasonality · ice algae and phytoplankton at the base of the web',
+      biology:'Arctic primary production comes from algae in sea ice and the water column. Seasonal light, ice cover, nutrient supply and stratification can shift where and when production occurs, and these changes can propagate upward to polar cod, seals and whales.',
+      science:'The biological response to declining sea ice is not uniform across the Arctic. Earlier ice loss can increase light and open-water production in some regions while creating trophic mismatches elsewhere.'
+    },
+    southern:{
+      subtitle:'Antarctic Circumpolar Current · seasonal sea ice · krill-centred energy transfer',
+      biology:'Southern Ocean ecosystems form a continuum from heavily ice-covered southern waters to more open northern regions. Antarctic krill provide a major pathway from primary production to penguins, fishes, seals and whales, but alternative prey pathways also occur.',
+      science:'Sea ice, circulation and biogeochemical conditions determine where productive waters and prey are found. The Antarctic Peninsula is especially useful for studying how physical connectivity changes the spatial structure of food webs.'
+    }
+  };
+  if(oceans){
+    for(const [id,e] of Object.entries(oceanExtra)){if(oceans[id])Object.assign(oceans[id],e);} 
+  }
+
+  /* Maintain an internal, source-aware knowledge index without creating any new UI. */
+  window.__OCEAN_V48_BIOLOGY={
+    version:'48.0.0',
+    speciesExpanded:Object.values(F).length,
+    regionsExpanded:Object.keys(regional),
+    oceansExpanded:Object.keys(oceanExtra),
+    sourceBase:[
+      'FishBase species records and life-history fields',
+      'NOAA Fisheries species profiles and ecosystem resources',
+      'NOAA Arctic Report Card',
+      'Great Barrier Reef Marine Park Authority / Reef Authority',
+      'British Antarctic Survey Southern Ocean ecosystem research',
+      'NOAA California Current Integrated Ecosystem Assessment'
+    ],
+    note:'Educational reference content; species ranges, stock status and conservation condition can vary by population, season and assessment year.'
+  };
+
+  window.__OCEAN_V48_READY=true;
+  window.__OCEAN_V48_BOOTING=false;
+})();
+</script>
+
+<script id="ocean-v49-fish-expansion">
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V49_READY||window.__OCEAN_V49_BOOTING)return;
+  window.__OCEAN_V49_BOOTING=true;
+
+  /*
+   OCEAN EXPLORER V49 · GLOBAL FISH EXPANSION
+   ------------------------------------------------------------
+   Append-only content + canvas renderer layer.
+   No existing DOM/CSS/input handlers are changed.
+   Species are source-informed from FishBase / NOAA / CDFW / regional reef references.
+   Visuals are original canvas silhouettes built from the game's existing fish renderer grammar:
+   body ellipse + fins + tail + eyes + pattern marks + low-amplitude swimming motion.
+  */
+  const V23=window.__OCEAN_V23;
+  const WORLD=window.__OCEAN_V16_WORLD;
+  if(!V23||!WORLD){setTimeout(()=>location.reload(),80);return;}
+  const species=V23.species;
+
+  const X=(id,name,latin,group,diet,habitat,depth,size,behavior,adaptation,reproduction,conservation,source,style,visual)=>({
+    id,name,latin,group,diet,habitat,depth,size,behavior,adaptation,reproduction,conservation,source,style,visual,v49Expanded:true
+  });
+
+  const FISH=[
+    /* CORAL TRIANGLE / INDO-PACIFIC REEF */
+    X('moorish_idol_v49','Moorish idol','Zanclus cornutus','Fish','Small encrusting invertebrates','Inner lagoons, reef flats and clear outer coral/rocky reefs of the Indo-Pacific','0–182 m; commonly shallow reef habitat','up to ~23 cm TL','Usually alone, paired or in small groups; picks food from hard reef surfaces and crevices.','Deeply compressed body, tubular snout, brush-like teeth and an elongated dorsal filament specialise it for fine feeding over reef structure.','Oviparous; long pelagic larval duration helps explain its exceptionally broad Indo-Pacific distribution.','Local collection and reef habitat degradation can affect populations; the species is difficult to maintain in aquaria because of its specialised diet.','FishBase · Zanclus cornutus','reef_fish','moorish'),
+    X('titan_triggerfish_v49','Titan triggerfish','Balistoides viridescens','Fish','Sea urchins, crustaceans, molluscs, worms and reef material','Shallow Indo-Pacific coral reefs, lagoons and reef slopes','0–60 m','up to ~75 cm TL','Often works a territory around reef structure; may excavate or manipulate rubble while feeding.','A deep laterally compressed body and strong jaws are paired with a first dorsal spine that can be locked upright in a crevice.','Oviparous; eggs are laid in the benthic environment and parental territorial behaviour can be important around nesting areas.','Large reef triggerfish can be sensitive to intensive fishing and habitat loss; observe nesting territories without crowding the fish.','FishBase · Balistoides viridescens · regional reef-fish field guides','reef_fish','trigger'),
+    X('emperor_angelfish_v49','Emperor angelfish','Pomacanthus imperator','Fish','Sponges, algae and other benthic invertebrates','Coral reefs, reef slopes, lagoons and drop-offs across the Indo-Pacific','1–100 m','up to ~40 cm SL','Moves deliberately among reef crevices and may switch between browsing on sponges and other benthic food.','Deep compressed body, brush-like teeth and strong dorsal/anal fins improve manoeuvrability in complex reef structure; adults show vivid blue-yellow striping.','Oviparous; eggs are released into the water column after pair spawning.','Reef habitat degradation and collection pressure can affect local populations; avoid repeated close approaches around reef crevices.','FishBase · Pomacanthus imperator · reef-fish references','reef_fish','angelfish'),
+    X('powderblue_surgeonfish_v49','Powder blue surgeonfish','Acanthurus leucosternon','Fish','Benthic algae','Shallow coral reefs and reef flats of the Indo-Pacific','1–25 m','up to ~23 cm TL','Grazes repeatedly along reef surfaces and may join mixed herbivore groups.','A laterally compressed body, brush-like teeth and a sharp caudal-peduncle spine form a specialised algal-grazing toolkit.','Oviparous; pelagic eggs and larvae disperse with currents.','Reef degradation and fishing/collection can reduce local abundance; watch for repeated grazing paths as field evidence.','FishBase · Acanthurus leucosternon · reef fish survey references','reef_fish','surgeon'),
+
+    /* GREAT BARRIER REEF */
+    X('coral_trout_v49','Leopard coralgrouper / coral trout','Plectropomus leopardus','Fish','Fish, crustaceans and other reef prey','Coral reefs and reef slopes of the western Pacific, including Queensland','3–100 m','up to ~120 cm SL','Ambush predator that holds near reef structure, then accelerates into prey or uses suction feeding.','Robust jaws, canine teeth and a deep-bodied grouper profile support rapid suction strikes around complex reef structure.','Spawning releases eggs and sperm into the water column; reproductive timing and aggregation behaviour are regionally structured.','Large adults can be disproportionately important to reef predator communities and are sensitive to heavy fishing pressure.','FishBase · Plectropomus leopardus · GBR reef fisheries references','grouper','coral_trout'),
+    X('sixbar_wrasse_v49','Sixbar wrasse','Thalassoma hardwicke','Fish','Benthic crustaceans, small fishes and foraminiferans','Shallow Indo-Pacific lagoon and seaward reefs, slopes and drop-offs','0–15 m','up to ~25 cm TL','Active reef browser that makes short dashes between patches of substrate and small prey.','Elongated wrasse body and flexible jaws support rapid picking of mobile prey from reef surfaces.','Oviparous; pairs or groups spawn in the water column.','Generally widespread, but reef habitat condition and local fishing pressure shape abundance.','FishBase · Thalassoma hardwicke','reef_fish','wrasse'),
+    X('raccoon_butterflyfish_v49','Raccoon butterflyfish','Chaetodon lunula','Fish','Nudibranchs, tubeworms, benthic invertebrates, algae and some coral polyps','Lagoon and seaward reefs, reef flats and shallow rocky habitats','0–170 m; usually shallow reef areas','up to ~20 cm TL','Often occurs in pairs or small groups and makes careful pecking movements over the reef.','Deep, disk-like body and narrow snout allow precise foraging in crevices; bold eye-band pattern can aid field identification.','Oviparous; pairs form during breeding and release gametes into the water column.','Reef habitat degradation can reduce feeding habitat; nocturnal/crevice use makes gentle observation especially useful.','FishBase · Chaetodon lunula','reef_fish','butterfly'),
+    X('oriental_sweetlips_v49','Oriental sweetlips','Plectorhinchus vittatus','Fish','Benthic crustaceans and other invertebrate prey','Coral reefs and shallow reef slopes of the Indo-West Pacific','2–25 m','up to ~72 cm SL','Juveniles and adults change appearance with age; adults move above reef structure and inspect the substrate for prey.','Fleshy lips, robust jaws and rounded body support suction feeding on benthic prey.','Oviparous; eggs and sperm are released into the water column.','Reef degradation and fishing pressure can alter local abundance and the age structure of populations.','FishBase · Plectorhinchus vittatus','reef_fish','sweetlips'),
+
+    /* CENTRAL PACIFIC PELAGIC */
+    X('mahi_mahi_v49','Common dolphinfish / mahi-mahi','Coryphaena hippurus','Fish','Small fishes, squid and crustaceans','Tropical and subtropical pelagic-neritic waters of the Atlantic, Indian and Pacific oceans','0–85 m','up to ~210 cm TL','Fast pelagic predator; often associates with floating objects, current fronts and prey schools.','Long continuous dorsal fin, deeply forked tail and streamlined body support high-speed cruising and rapid turns.','Multiple spawning events can occur in warm waters; eggs and larvae are pelagic.','Widely fished and fast-growing, but local abundance is affected by fishing pressure and changing ocean conditions.','FishBase · Coryphaena hippurus','tuna','mahi'),
+    X('indo_pacific_sailfish_v49','Indo-Pacific sailfish','Istiophorus platypterus','Fish','Small pelagic fishes, squid and crustaceans','Tropical and temperate pelagic waters of the Indo-Pacific','0–200 m','up to ~348 cm FL','Highly mobile predator that can herd or slash through prey schools before making short high-speed attacks.','A long bill, tall sail-like dorsal fin and crescent tail produce a distinctive high-thrust silhouette and agile turning profile.','Oviparous pelagic spawner; eggs and larvae drift in open water.','Highly migratory and managed through fisheries measures in many regions; bycatch is an important monitoring issue.','FishBase · Istiophorus platypterus','tuna','sailfish'),
+    X('swordfish_v49','Swordfish','Xiphias gladius','Fish','Fish and squid','Open tropical and temperate Atlantic, Indian and Pacific waters','0–2878 m; commonly upper-to-midwater foraging depths','up to ~455 cm FL','Solitary or loosely associated pelagic hunter that makes strong vertical movements between warmer surface waters and deeper water.','Long sword-like upper jaw, cylindrical body and tall first dorsal fin produce a specialised pursuit-predator profile.','Pelagic spawner with eggs and larvae drifting in the water column.','Highly migratory and fishery-managed; population structure and catch rates are monitored by region.','FishBase · Xiphias gladius','tuna','swordfish'),
+    X('ocean_sunfish_v49','Ocean sunfish','Mola mola','Fish','Jellyfish and other soft-bodied zooplankton; also small prey','Pelagic waters of tropical and temperate oceans worldwide','30–1515 m; often shallower','up to ~333 cm TL','Alternates between slow cruising near the surface and deep dives; can appear to “hover” while adjusting its large dorsal and anal fins.','Very deep laterally compressed body, short pectorals and paired high dorsal/anal fins propel it by synchronous sculling; the tail is modified into a clavus.','Produces enormous numbers of pelagic eggs; early life stages are tiny compared with adults.','Bycatch, vessel interactions and plastic ingestion are among documented human pressures; population trends vary by region.','FishBase · Mola mola','reef_fish','sunfish'),
+
+    /* CALIFORNIA CURRENT */
+    X('shortfin_mako_v49','Shortfin mako','Isurus oxyrinchus','Shark','Fish, sharks, cephalopods and other fast-moving prey','Temperate and tropical open ocean; sometimes nearshore in productive areas','0–888 m; often surface to ~150 m','up to ~445 cm TL','Fast open-water predator that cruises continuously and can accelerate sharply during pursuit.','Spindle-shaped body, large crescent tail, pointed snout and large dark eyes form a classic high-speed lamnid shark profile.','Ovoviviparous; embryos develop internally and litter size is small compared with many bony fishes.','Highly migratory and vulnerable to fishing mortality and bycatch; stock assessments are region-specific.','FishBase · Isurus oxyrinchus','shark','mako'),
+    X('kelp_greenling_v49','Kelp greenling','Hexagrammos decagrammus','Fish','Crustaceans, worms, molluscs and small fishes','Rocky inshore habitat, kelp beds and nearby sand bottoms of the eastern Pacific','to ~46 m','up to ~61 cm TL','Often stays close to kelp blades, rocks and crevices, making short movements to pick prey from the substrate.','Elongated body and broad dorsal/anal fin surfaces help it hold position around rocky structure; mottled colours break up its outline.','Oviparous; eggs are deposited on the bottom and guarded in some populations.','A common kelp-associated fish, useful in regional surveys of rocky reef and kelp habitat condition.','FishBase · Hexagrammos decagrammus','rockfish','greenling'),
+    X('opaleye_v49','Opaleye','Girella nigricans','Fish','Algae and other benthic food','Rocky intertidal and shallow subtidal habitat from central California to Baja California','2–30 m; commonly very shallow','up to ~55 cm TL','Grazes across rocks and kelp-associated surfaces, often holding close to shelter while feeding.','Deep-bodied herbivorous nibbler with strong jaws for clipping algae from hard substrate; distinctive iridescent appearance and pale eye spots aid identification.','Oviparous; pelagic eggs and larvae disperse from spawning sites.','A useful indicator of shallow rocky habitat use; local abundance responds to food, habitat and fishing conditions.','FishBase · Girella nigricans','rockfish','opaleye'),
+    X('california_flounder_v49','California halibut / California flounder','Paralichthys californicus','Fish','Fishes and squid','Sandy coastal bottoms, bays, estuaries and nearshore shelf habitat of the eastern Pacific','0–183 m','up to ~152 cm TL','Lies on or just above the bottom and uses camouflage before making a sudden lateral strike at prey.','Flatfish body, both eyes shifted to one side during development and asymmetric swimming orientation specialise it for life over the seabed.','Pelagic eggs and larvae; juveniles settle into shallow nursery habitats before becoming demersal adults.','Coastal nursery habitats and fisheries management are important to local populations.','FishBase · Paralichthys californicus','flatfish','halibut'),
+
+    /* NORTH ATLANTIC */
+    X('atlantic_bluefin_v49','Atlantic bluefin tuna','Thunnus thynnus','Fish','Fish, squid and crustaceans','North Atlantic and adjacent warm-temperate pelagic waters','surface to deep-diving pelagic waters','up to >300 cm FL','Powerful long-distance swimmer; adults can cross large ocean basins and dive deeply.','Torpedo-shaped body, crescent tail, finlets and regional endothermy support sustained high-speed swimming.','Pelagic spawning in geographically structured spawning areas; eggs and larvae drift in surface waters.','Strongly fishery-managed; stock condition differs among management units and assessments.','NOAA Fisheries · Atlantic bluefin tuna · FishBase','tuna','atlantic_bluefin'),
+    X('blue_shark_v49','Blue shark','Prionace glauca','Shark','Small pelagic fishes, squid and occasionally carrion','Open temperate and tropical oceans worldwide','0–1000+ m; broad vertical range','up to ~380 cm TL','Long-distance oceanic cruiser that often swims continuously and may aggregate by size or sex.','Slender body, long pectoral fins and dark-blue dorsal coloration produce a recognisable pelagic shark silhouette.','Viviparous; embryos develop internally and pups are born alive.','Widely caught as bycatch and in targeted fisheries; management and stock status vary by region.','FishBase · Prionace glauca','shark','blue_shark'),
+    X('saithe_v49','Saithe / pollock','Pollachius virens','Fish','Crustaceans when young; fishes at larger sizes','North Atlantic shelf waters, often around rocky structure and current fronts','37–364 m','up to ~130 cm TL','Active, gregarious swimmer that can move between coastal and deeper waters with season.','Dark green-brown body, pale lateral line and forked tail support schooling movement in dim shelf waters.','Batch spawning; eggs and larvae are pelagic.','Important commercial species; fishing pressure and changing distribution are managed at stock level.','FishBase · Pollachius virens','cod','saithe'),
+    X('capelin_v49','Capelin','Mallotus villosus','Fish','Zooplankton, especially copepods and euphausiids','Cold North Atlantic and Arctic shelf waters, often near productive seasonal fronts','0–300 m reported range','up to ~25 cm TL','Forms dense schools and undertakes seasonal movements linked to spawning and feeding conditions.','Small streamlined body and schooling behaviour provide efficient access to plankton patches while reducing individual predation risk.','Spawns in coastal or shallow shelf settings; eggs are attached to gravel or seabed substrate in many populations.','A key forage fish for cod, seabirds, whales and other predators; recruitment varies strongly with climate and ocean conditions.','FishBase · Mallotus villosus · Arctic ecosystem references','herring','capelin'),
+
+    /* ARCTIC SHELF */
+    X('greenland_halibut_v49','Greenland halibut','Reinhardtius hippoglossoides','Fish','Fish, capelin, prawns and benthic invertebrates','Cold Arctic and boreal shelf/slope habitats of both Atlantic and Pacific sectors','1–2200 m; commonly ~500–1000 m for adults','up to ~130 cm TL','Benthopelagic flatfish that can leave the seabed and forage higher in the water column than many flatfishes.','Asymmetric flatfish body, eyes on one side and countershaded dark upper surface support life close to the bottom and in midwater.','Batch spawner; eggs and larvae develop in the water column.','Fishery-managed and sensitive to shifts in temperature, prey and deep-shelf habitat conditions.','FishBase · Reinhardtius hippoglossoides','flatfish','greenland_halibut'),
+    X('saffron_cod_v49','Saffron cod','Eleginus gracilis','Fish','Small crustaceans, fishes and benthic prey','Arctic and North Pacific coastal/shelf waters, including brackish influence','0–300 m','up to ~55 cm TL','Moves between coastal and shelf waters and can exploit seasonal prey concentrations.','Three dorsal fins, a small chin barbel and cod-like body support manoeuvring over shallow and mid-shelf bottoms.','Spawns seasonally; eggs and larvae use coastal/shelf water masses.','An important regional food fish and prey species; abundance changes with fishing and environmental conditions.','FishBase · Eleginus gracilis','cod','saffron_cod'),
+    X('greenland_shark_v49','Greenland shark','Somniosus microcephalus','Shark','Fish, sharks, skates, seals, squid and benthic prey','Deep Arctic and North Atlantic waters, fjords and shelf/slope habitats','0–2992 m','up to ~550 cm TL reported for females','Very slow-moving deep-water shark; can patrol broad depth zones and consume both active prey and carrion.','Compact fins, heavy body and dark coloration fit a low-energy deep-water life strategy.','Ovoviviparous; embryos develop internally. Extremely slow growth and late maturity make population recovery slow.','Long-lived and slow-growing; fishing mortality can have prolonged population consequences, so observation should avoid disturbance.','FishBase · Somniosus microcephalus','shark','greenland_shark'),
+    X('arctic_skate_v49','Arctic skate','Amblyraja hyperborea','Ray','Bottom fishes and invertebrates','Cold deep Arctic shelf and slope bottoms','~18–800+ m','up to ~90 cm TL','Moves close to the bottom with slow fin undulations, then rests on sediment while waiting for prey.','Broad pectoral disc, flattened body and long tail are adapted to benthic life and low-speed manoeuvring.','Oviparous; produces egg cases that develop on the seabed.','Deep-cold habitat makes populations difficult to survey; bycatch and slow life history are important management considerations.','FishBase · Arctic skate field references','ray','arctic_skate'),
+
+    /* ANTARCTIC PENINSULA / SOUTHERN OCEAN */
+    X('antarctic_silverfish_v49','Antarctic silverfish','Pleurogramma antarcticum','Fish','Krill and other zooplankton','Antarctic shelf waters, ice-associated and pelagic zones','surface to several hundred metres','up to ~25 cm TL','Forms schools in productive shelf waters and becomes an important prey item for penguins, seals and larger fishes.','Silver body, large eye and pelagic schooling form a classic Southern Ocean forage-fish profile.','Pelagic eggs and larvae; early life stages occupy upper water before recruiting deeper.','A key Southern Ocean forage fish; ecosystem and krill conditions strongly influence recruitment and food-web availability.','FishBase · Pleurogramma antarctica · Southern Ocean fish references','herring','antarctic_silverfish'),
+    X('black_rockcod_v49','Black rockcod / Antarctic rockcod','Notothenia coriiceps','Fish','Small crustaceans, fish and seaweeds','Rocky Antarctic shelf habitats around the Antarctic Peninsula and wider Southern Ocean shelf','0–550 m; commonly <200 m','up to ~62 cm TL','Demersal fish that stays close to rocky or structured substrate and searches the bottom for prey.','Deep-bodied notothenioid form and antifreeze-adapted physiology support life in near-freezing seawater.','Oviparous; benthic eggs and early life stages are associated with seasonal Antarctic habitats.','Sensitive to changes in cold-water habitat, prey and fishing conditions; long-term monitoring is valuable.','FishBase · Notothenia coriiceps','cod','black_rockcod'),
+    X('mackerel_icefish_v49','Mackerel icefish','Champsocephalus gunnari','Fish','Krill and mysids','Southern Ocean shelf and slope waters, including the northern Antarctic Peninsula','0–700 m; often 30–250 m','up to ~66 cm TL','Cruises above the seafloor and follows dense krill patches in productive shelf waters.','Icefish physiology and a streamlined predatory body support life in very cold, oxygen-rich water; the species lacks red blood cells like other channichthyids.','Synchronous spawning occurs in autumn/winter; larvae have a long pelagic phase.','Fishery-managed in the Southern Ocean; abundance is closely linked to prey fields and ecosystem conditions.','FishBase · Champsocephalus gunnari · Southern Ocean references','icefish','mackerel_icefish'),
+    X('patagonian_toothfish_v49','Patagonian toothfish','Dissostichus eleginoides','Fish','Fish and cephalopods','Deep Southern Ocean and sub-Antarctic shelf/slope habitats','0–2144 m; often ~70–1500 m','up to ~215 cm TL','Slow but powerful deep-water predator that shifts from semi-pelagic juvenile habitat toward deeper demersal adult habitat.','Robust body, large mouth and cold-adapted lipid-rich physiology support life in deep Southern Ocean water.','Spawns at depth; juveniles change habitat as they grow.','Catch is internationally managed in relevant Southern Ocean fisheries; slow growth and long life make adult loss ecologically important.','FishBase · Dissostichus eleginoides · Southern Ocean fisheries references','deep_fish','patagonian_toothfish')
+  ];
+
+  const addRecord=(r)=>{
+    const old=species.find(s=>s.id===r.id);
+    if(old)Object.assign(old,r); else species.push(r);
+  };
+  FISH.forEach(addRecord);
+
+  const REGION_ADDITIONS={
+    coral_triangle:['moorish_idol_v49','titan_triggerfish_v49','emperor_angelfish_v49','powderblue_surgeonfish_v49'],
+    great_barrier:['coral_trout_v49','sixbar_wrasse_v49','raccoon_butterflyfish_v49','oriental_sweetlips_v49'],
+    central_pacific:['mahi_mahi_v49','indo_pacific_sailfish_v49','swordfish_v49','ocean_sunfish_v49'],
+    california_current:['shortfin_mako_v49','kelp_greenling_v49','opaleye_v49','california_flounder_v49'],
+    north_atlantic:['atlantic_bluefin_v49','blue_shark_v49','saithe_v49','capelin_v49'],
+    arctic_shelf:['greenland_halibut_v49','saffron_cod_v49','greenland_shark_v49','arctic_skate_v49'],
+    antarctic_peninsula:['antarctic_silverfish_v49','black_rockcod_v49','mackerel_icefish_v49','patagonian_toothfish_v49']
+  };
+
+  for(const [rid,ids] of Object.entries(REGION_ADDITIONS)){
+    const reg=V23.regions?.[rid], wr=WORLD.regions?.[rid];
+    if(!reg||!wr)continue;
+    ids.forEach(id=>{if(!reg.roster.includes(id))reg.roster.push(id);});
+    wr.species=reg.roster.map((sid,i)=>[sid,Math.max(.25,.95-(i%5)*.09),'regional fish expansion · source-informed']);
+    wr.plannedSpecies=[];
+    wr.status='active_demo';
+    wr.lesson=(wr.lesson||'')+' Expanded fish roster adds additional trophic roles and regional morphology examples.';
+  }
+
+  /* Rebuild the current scene using V23's existing population/spawn logic. */
+  try{V23.rebuild?.();}catch(e){}
+
+  const prevDraw=window.drawCreature;
+  const newVisuals=new Set(FISH.map(x=>x.id));
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  function renderFish(c){
+    const s=species.find(x=>x.id===c.sp); if(!s||!newVisuals.has(s.id))return false;
+    const q=typeof worldToScreen==='function'?worldToScreen(c.x,c.y):{x:W/2+c.x,y:H/2+c.y};
+    if(q.x<-280||q.x>W+280||q.y<-260||q.y>H+260)return true;
+    const sc=c.s||1, dir=c.dir||1, swim=Math.sin(time*4.2+c.seed), finWave=Math.sin(time*3.0+c.seed*.7);
+    ctx.save();
+    ctx.translate(q.x,q.y+swim*(s.visual==='sunfish'?0.65:1.6));
+    ctx.scale(dir*sc,sc);
+
+    const eye=(x=28,y=-4,r=3)=>{
+      ctx.fillStyle='#efffff';ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#112329';ctx.beginPath();ctx.arc(x+.6,y-.2,Math.max(1,r*.42),0,Math.PI*2);ctx.fill();
+    };
+    const tail=(tx=-32,ty=0,w=22,h=20,fill='#314b58')=>{
+      ctx.fillStyle=fill;ctx.beginPath();ctx.moveTo(tx,ty);ctx.lineTo(tx-w,ty-h);ctx.lineTo(tx-w+7,ty);ctx.lineTo(tx-w,ty+h);ctx.closePath();ctx.fill();
+    };
+    const body=(fill,rx=40,ry=14,accent='#dbeee9')=>{
+      const g=ctx.createLinearGradient(-rx,-ry,rx,ry);g.addColorStop(0,accent);g.addColorStop(.34,fill);g.addColorStop(1,'rgba(235,249,235,.92)');
+      ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(0,0,rx,ry,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,.22)';ctx.beginPath();ctx.ellipse(-5,-ry*.55,rx*.36,ry*.22,-.12,0,Math.PI*2);ctx.fill();
+    };
+
+    switch(s.visual){
+      case 'moorish':
+        body('#d9b93d',31,17,'#f2f4e9');
+        tail(-26,0,18,17,'#f0c84e');
+        ctx.fillStyle='#151d22';ctx.fillRect(-17,-17,7,34);ctx.fillRect(3,-17,7,34);
+        ctx.fillStyle='#f2f4ef';ctx.beginPath();ctx.moveTo(-2,-13);ctx.lineTo(4,-41);ctx.lineTo(10,-13);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#f0c84e';ctx.beginPath();ctx.moveTo(2,-38);ctx.lineTo(17,-58);ctx.lineTo(11,-29);ctx.closePath();ctx.fill();
+        ctx.strokeStyle='#202a30';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(17,0);ctx.lineTo(30,-4);ctx.stroke();eye(23,-5,2.6);break;
+      case 'trigger':
+        body('#6e8a68',29,20,'#9aa67a');
+        tail(-24,0,15,14,'#d7d0aa');
+        ctx.fillStyle='#d9e1bc';ctx.strokeStyle='#4e664e';ctx.lineWidth=1;for(let i=-18;i<20;i+=7){ctx.beginPath();ctx.moveTo(i,-16);ctx.lineTo(i+4,16);ctx.stroke();}
+        ctx.beginPath();ctx.moveTo(-2,-18);ctx.lineTo(5,-34);ctx.lineTo(11,-16);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#d7d36d';ctx.beginPath();ctx.arc(-5,8,11,0,Math.PI*2);ctx.fill();eye(23,-5,2.5);break;
+      case 'angelfish':
+      case 'butterfly':
+        body(s.visual==='angelfish'?'#5f6fd7':'#f2a13c',22,25,'#f3eac9');
+        ctx.fillStyle=s.visual==='angelfish'?'#32b0b4':'#673e2d';
+        ctx.beginPath();ctx.moveTo(-6,-20);ctx.lineTo(1,-47);ctx.lineTo(10,-21);ctx.closePath();ctx.fill();
+        ctx.beginPath();ctx.moveTo(-2,20);ctx.lineTo(4,45);ctx.lineTo(12,19);ctx.closePath();ctx.fill();
+        if(s.visual==='angelfish'){
+          ctx.fillStyle='#f0c84f';for(let x=-14;x<15;x+=8){ctx.fillRect(x,-25,4,50);}
+          ctx.fillStyle='#243759';ctx.beginPath();ctx.arc(-16,3,8,0,Math.PI*2);ctx.fill();
+        }else{
+          ctx.fillStyle='#111c22';ctx.fillRect(-20,-25,7,50);ctx.fillRect(0,-25,6,50);ctx.fillStyle='#e9e1bf';ctx.fillRect(14,-20,4,40);
+        }
+        eye(17,-5,2.2);break;
+      case 'surgeon':
+        body('#3f9fbe',33,15,'#a8d9c9');tail(-28,0,17,14,'#274f6b');
+        ctx.fillStyle='#f2ece1';ctx.fillRect(20,-11,10,22);
+        ctx.fillStyle='#a9e7d6';ctx.beginPath();ctx.arc(-2,0,10,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#1e475d';ctx.beginPath();ctx.arc(30,-3,2.3,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle='#222d33';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(28,10);ctx.lineTo(38,7);ctx.stroke();eye(22,-5,2.2);break;
+      case 'wrasse':
+        body('#5bc48d',36,12,'#83a98c');tail(-31,0,18,12,'#3c6b83');
+        ctx.fillStyle='#e7cd64';for(let i=0;i<5;i++){ctx.fillRect(-18+i*9,-12,3,24);}
+        ctx.fillStyle='#d08dba';ctx.beginPath();ctx.ellipse(23,-1,9,7,0,0,Math.PI*2);ctx.fill();eye(28,-4,2.2);break;
+      case 'sweetlips':
+        body('#9a7b65',34,15,'#d9d0ad');tail(-28,0,16,14,'#705b57');
+        ctx.strokeStyle='#28313a';ctx.lineWidth=3;for(let i=-10;i<28;i+=10){ctx.beginPath();ctx.moveTo(i,-13);ctx.lineTo(i+4,13);ctx.stroke();}
+        ctx.fillStyle='#e1c6b6';ctx.beginPath();ctx.ellipse(25,1,8,5,0,0,Math.PI*2);ctx.fill();eye(28,-4,2.4);break;
+      case 'coral_trout':
+        body('#be5a48',39,14,'#d8af86');tail(-34,0,18,14,'#e8efe8');
+        ctx.fillStyle='#4e8fd7';for(let i=0;i<24;i++){const x=-25+(i%8)*7,y=-8+Math.floor(i/8)*8;ctx.beginPath();ctx.arc(x,y,1.5,0,Math.PI*2);ctx.fill();}
+        ctx.fillStyle='#e1ebe3';ctx.beginPath();ctx.moveTo(0,-13);ctx.lineTo(8,-30);ctx.lineTo(15,-11);ctx.closePath();ctx.fill();eye(29,-5,2.3);break;
+      case 'mahi':
+        body('#2b7ea1',46,15,'#8fd0c8');tail(-43,0,22,18,'#4d845a');
+        ctx.fillStyle='#4eae56';ctx.beginPath();ctx.moveTo(-34,-13);ctx.lineTo(-28,-30);ctx.lineTo(-20,-13);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#e5c94d';for(let i=-20;i<31;i+=10){ctx.fillRect(i,9,5,3);}
+        ctx.strokeStyle='rgba(245,243,199,.7)';ctx.lineWidth=1.5;for(let i=0;i<7;i++){ctx.beginPath();ctx.moveTo(15+i*4,-4);ctx.lineTo(23+i*4,-7);ctx.stroke();}
+        eye(38,-4,2.5);break;
+      case 'sailfish':
+        body('#315e88',48,11,'#b7d8df');tail(-44,0,24,17,'#54768f');
+        ctx.fillStyle='#2f5379';ctx.beginPath();ctx.moveTo(-20,-10);ctx.quadraticCurveTo(-2,-62,19,-10);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#e6f0e8';ctx.beginPath();ctx.moveTo(42,0);ctx.lineTo(83,-5);ctx.lineTo(84,3);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#d8b64b';for(let i=-15;i<30;i+=8){ctx.fillRect(i,6,3,3);}
+        eye(42,-3,2.2);break;
+      case 'swordfish':
+        body('#536c78',52,12,'#d3dde0');tail(-47,0,25,17,'#3c5159');
+        ctx.fillStyle='#34434b';ctx.beginPath();ctx.moveTo(34,-4);ctx.lineTo(86,-10);ctx.lineTo(39,2);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#324b5c';ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(2,-31);ctx.lineTo(14,-9);ctx.closePath();ctx.fill();eye(35,-3,2.4);break;
+      case 'sunfish':
+        const pulse=Math.sin(time*2+c.seed)*0.7;
+        ctx.fillStyle='#737d85';ctx.beginPath();ctx.ellipse(0,0,28,36+pulse,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#455b67';ctx.beginPath();ctx.moveTo(-6,-29);ctx.quadraticCurveTo(5,-66,17,-28);ctx.closePath();ctx.fill();
+        ctx.beginPath();ctx.moveTo(-3,29);ctx.quadraticCurveTo(10,65,20,27);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#d4e6e6';ctx.beginPath();ctx.ellipse(18,1,11,8,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#28333a';ctx.beginPath();ctx.arc(24,-4,2.7,0,Math.PI*2);ctx.fill();break;
+      case 'mako':
+      case 'blue_shark':
+      case 'greenland_shark':
+      case 'shark':
+        const sharkBody=s.visual==='mako'?'#406a87':s.visual==='blue_shark'?'#315d7e':s.visual==='greenland_shark'?'#3e4c54':'#596c73';
+        ctx.fillStyle=sharkBody;ctx.beginPath();ctx.ellipse(0,0,53,13,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#38484f';ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(12,-33);ctx.lineTo(22,-8);ctx.closePath();ctx.fill();
+        ctx.beginPath();ctx.moveTo(4,8);ctx.lineTo(15,28);ctx.lineTo(25,8);ctx.closePath();ctx.fill();
+        tail(-48,0,25,16,'#3b4d55');
+        if(s.visual==='mako'){ctx.fillStyle='#9bb7c5';ctx.beginPath();ctx.moveTo(15,4);ctx.lineTo(50,8);ctx.lineTo(23,10);ctx.closePath();ctx.fill();}
+        eye(34,-4,2.4);break;
+      case 'hammerhead':
+        ctx.fillStyle='#5e7074';ctx.beginPath();ctx.ellipse(0,2,54,12,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#425359';ctx.beginPath();ctx.moveTo(8,-8);ctx.lineTo(20,-31);ctx.lineTo(29,-8);ctx.closePath();ctx.fill();
+        tail(-49,2,24,16,'#405158');
+        ctx.fillStyle='#65777a';ctx.beginPath();ctx.roundRect(18,-17,38,9,4);ctx.fill();
+        ctx.fillStyle='#efffff';ctx.beginPath();ctx.arc(22,-13,3,0,Math.PI*2);ctx.arc(49,-13,3,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#14242b';ctx.beginPath();ctx.arc(23,-13,1.4,0,Math.PI*2);ctx.arc(50,-13,1.4,0,Math.PI*2);ctx.fill();break;
+      case 'greenling':
+        body('#54706a',37,13,'#a6aa86');tail(-34,0,17,13,'#51645f');
+        ctx.fillStyle='#3c504f';for(let i=0;i<18;i++){ctx.beginPath();ctx.arc(-24+(i%6)*8,-8+Math.floor(i/6)*7,1.8,0,Math.PI*2);ctx.fill();}
+        ctx.fillStyle='#697f6a';ctx.beginPath();ctx.moveTo(-10,-12);ctx.lineTo(-3,-28);ctx.lineTo(7,-11);ctx.closePath();ctx.fill();eye(30,-4,2.1);break;
+      case 'opaleye':
+        body('#6c7d68',35,18,'#a6ad8c');tail(-31,0,16,15,'#586451');
+        ctx.fillStyle='#7db1a0';ctx.beginPath();ctx.arc(10,-3,6,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#d6f0db';ctx.beginPath();ctx.arc(29,-5,2.6,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#2f3c36';ctx.beginPath();ctx.moveTo(-3,-17);ctx.lineTo(7,-31);ctx.lineTo(14,-16);ctx.closePath();ctx.fill();break;
+      case 'flatfish':
+        ctx.fillStyle='#8e8066';ctx.beginPath();ctx.ellipse(0,0,38,17,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#6e5f51';for(let i=0;i<11;i++){ctx.beginPath();ctx.arc(-25+(i%6)*9,-9+Math.floor(i/6)*10,1.6,0,Math.PI*2);ctx.fill();}
+        ctx.fillStyle='#eef5ec';ctx.beginPath();ctx.arc(27,-6,3,0,Math.PI*2);ctx.arc(31,-3,3,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#152328';ctx.beginPath();ctx.arc(27,-6,1.2,0,Math.PI*2);ctx.arc(31,-3,1.2,0,Math.PI*2);ctx.fill();break;
+      case 'saithe':
+      case 'saffron_cod':
+        body(s.visual==='saithe'?'#5b735f':'#8a8068',40,14,'#c3b79a');tail(-36,0,17,14,'#4f5a53');
+        ctx.fillStyle='#51615b';ctx.beginPath();ctx.moveTo(-16,-13);ctx.lineTo(-8,-28);ctx.lineTo(1,-12);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#68715b';ctx.beginPath();ctx.moveTo(-2,-13);ctx.lineTo(6,-25);ctx.lineTo(15,-12);ctx.closePath();ctx.fill();
+        ctx.strokeStyle='#565e55';ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(27,2);ctx.lineTo(37,10);ctx.stroke();eye(28,-4,2.2);break;
+      case 'capelin':
+        body('#6e8791',28,8,'#d9e2e4');tail(-24,0,13,9,'#536b74');
+        ctx.fillStyle='#c9b973';ctx.fillRect(-8,-8,20,3);eye(24,-2,1.8);break;
+      case 'greenland_halibut':
+      case 'arctic_skate':
+        if(s.visual==='greenland_halibut'){
+          ctx.fillStyle='#556570';ctx.beginPath();ctx.ellipse(0,0,41,17,0,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle='#80939b';ctx.beginPath();ctx.ellipse(16,-3,18,8,0,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle='#eaf1ef';ctx.beginPath();ctx.arc(24,-5,2.5,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle='#15242a';ctx.beginPath();ctx.arc(25,-5,1.1,0,Math.PI*2);ctx.fill();
+        }else{
+          ctx.fillStyle='#666b6b';ctx.beginPath();ctx.moveTo(-52,0);ctx.quadraticCurveTo(-18,-24,0,-18);ctx.quadraticCurveTo(25,-26,55,0);ctx.quadraticCurveTo(25,20,0,14);ctx.quadraticCurveTo(-25,22,-52,0);ctx.fill();
+          ctx.strokeStyle='#39474c';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(44,0);ctx.quadraticCurveTo(75,12,105,-1);ctx.stroke();
+          ctx.fillStyle='#e7f0eb';ctx.beginPath();ctx.arc(13,-8,2.4,0,Math.PI*2);ctx.fill();
+        }
+        break;
+      case 'arctic_skate':break;
+      case 'antarctic_silverfish':
+        body('#8dabb0',45,9,'#dce9eb');tail(-40,0,20,12,'#687f84');
+        ctx.fillStyle='#5b7880';ctx.beginPath();ctx.moveTo(-10,-9);ctx.lineTo(-2,-26);ctx.lineTo(10,-9);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#eff7f4';ctx.beginPath();ctx.arc(30,-3,3.2,0,Math.PI*2);ctx.fill();ctx.fillStyle='#18262b';ctx.beginPath();ctx.arc(30,-3,1.3,0,Math.PI*2);ctx.fill();break;
+      case 'black_rockcod':
+        body('#3e5157',40,15,'#8a9a96');tail(-36,0,18,14,'#33464d');
+        ctx.fillStyle='#536970';ctx.beginPath();ctx.moveTo(-16,-13);ctx.lineTo(-6,-31);ctx.lineTo(5,-13);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#28363c';for(let i=0;i<8;i++){ctx.beginPath();ctx.arc(-23+i*7,-5+(i%2)*6,1.8,0,Math.PI*2);ctx.fill();}eye(29,-4,2.3);break;
+      case 'mackerel_icefish':
+        body('#a7bec6',42,11,'#e4eef0');tail(-38,0,19,14,'#70868c');
+        ctx.fillStyle='#c6dce1';ctx.beginPath();ctx.moveTo(-12,-10);ctx.lineTo(-2,-31);ctx.lineTo(8,-10);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#5b7279';ctx.beginPath();ctx.moveTo(5,5);ctx.lineTo(33,12);ctx.lineTo(15,11);ctx.closePath();ctx.fill();eye(30,-3,2.4);break;
+      case 'patagonian_toothfish':
+        body('#45545a',47,14,'#89989a');tail(-42,0,21,15,'#34444a');
+        ctx.fillStyle='#293940';ctx.beginPath();ctx.moveTo(-14,-13);ctx.lineTo(-4,-30);ctx.lineTo(7,-12);ctx.closePath();ctx.fill();
+        ctx.fillStyle='#27353a';ctx.beginPath();ctx.ellipse(27,1,9,6,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#edf1e8';ctx.beginPath();ctx.arc(34,-4,2.4,0,Math.PI*2);ctx.fill();break;
+      default:return false;
+    }
+
+    /* Shared low-amplitude fin/tail animation: keeps the new fish in the same visual language as the existing game. */
+    ctx.restore();
+    return true;
+  }
+
+  window.drawCreature=function(c){
+    if(renderFish(c))return;
+    if(typeof prevDraw==='function')return prevDraw(c);
+  };
+
+  /* Keep the same region and save architecture, only exposing a read-only expansion manifest. */
+  window.__OCEAN_V49={
+    version:'49.0.0',
+    addedSpecies:FISH.length,
+    regions:Object.fromEntries(Object.entries(REGION_ADDITIONS).map(([k,v])=>[k,v.length])),
+    speciesIds:FISH.map(x=>x.id),
+    visualFamilies:[
+      'reef morphology: angelfish / butterflyfish / triggerfish / surgeonfish / wrasse / sweetlips',
+      'pelagic morphology: tuna / dolphinfish / sailfish / swordfish / sunfish',
+      'cold-water morphology: cod / greenling / halibut / icefish / toothfish',
+      'elasmobranch morphology: mako / blue shark / Greenland shark / skate'
+    ],
+    note:'Original canvas artwork informed by external morphology references; no external image asset is embedded in the game.'
+  };
+  window.__OCEAN_V49_READY=true;
+  window.__OCEAN_V49_BOOTING=false;
+})();
+</script>
 </body>
 </html>
+<script id="ocean-v50-biology-deep-database">
+(()=>{
+'use strict';
+if(window.__OCEAN_V50_READY)return;
+const BIO_V50={
+clownfish:{overview:'A small reef damselfish that spends most of its life around a host sea anemone. Social groups have a size-based hierarchy, with the largest individuals dominating access to shelter and breeding opportunity.',morphology:'Its compact body and rounded fins suit precise manoeuvring inside branching reef structure. A mucus layer on the skin helps reduce the effect of the anemone’s nematocysts.',feeding:'Omnivorous feeding includes small planktonic food and algae or organic material around the host site. Diet can vary with reef habitat and age.',physiology:'The fish is adapted to shallow warm water and can retreat quickly into tentacles when threatened. Close access to shelter reduces the need for long-distance swimming in exposed water.',life:'The breeding pair lays adhesive eggs on a cleaned hard surface close to the host anemone. The male guards and ventilates the eggs; larvae later disperse in the plankton before settlement.',ecology:'The anemone provides shelter while the fish can contribute nutrients and water movement around the host. The relationship is useful for teaching mutualism while recognizing that benefits can vary among species and conditions.',field:'Look for a fish repeatedly returning to the same anemone, especially when disturbed. A short observation is stronger when the fish remains in the same defended territory across repeated passes.'},
+parrotfish:{overview:'Parrotfishes are major reef herbivores. Their feeding activity can remove algae from reef surfaces and, in some species, contributes to the production and movement of carbonate sediment.',morphology:'The beak-like fused teeth are formed from tightly packed dental elements that scrape or bite reef substrate. Pharyngeal teeth later process ingested material before digestion.',feeding:'Most feeding is based on algae growing over rock or dead coral, with incidental ingestion of substrate and associated microorganisms. Diet changes with species, body size and habitat.',physiology:'Jaw muscles are specialized for repeated biting and scraping. Many parrotfishes also change sex during life, with reproductive systems responding to social structure and local group composition.',life:'Many parrotfishes have pelagic eggs and larvae. Adults may form spawning groups, while juveniles settle from the plankton into reef habitats and later change colour and morphology as they mature.',ecology:'Herbivory can suppress algal competition with corals. Larger species also affect sediment production because carbonate material can pass through the gut and be excreted as fine particles.',field:'To document grazing, watch for repeated substrate contact and biting or scraping movements rather than simply recording that the fish is near a reef.'},
+bluetang:{overview:'Acanthurids are mobile herbivorous reef fishes. Palette surgeonfish combine schooling, rapid sheltering and repeated grazing of algal material on reef surfaces.',morphology:'The compressed body and relatively tall fins allow quick turning among coral branches. A sharp spine near the caudal peduncle is the defensive feature that gives surgeonfishes their common name.',feeding:'Feeding focuses on benthic algae and associated organic material. Juveniles and adults may use different microhabitats and feeding paths as body size changes.',physiology:'A laterally compressed body reduces turning radius while grazing. Gut specialization supports processing of plant-rich food that is generally lower in protein than animal prey.',life:'Spawning occurs in the water column, after which eggs and larvae drift before recruiting to reef habitat. Recruitment success can vary with currents, food availability and reef condition.',ecology:'By transferring energy from algal production to herbivorous fish biomass, surgeonfish connect primary production with higher trophic levels.',field:'Repeated grazing passes over the same reef patch are more informative than a single feeding movement. Note patch type, depth and whether several individuals use the same area.'},
+butterflyfish:{overview:'Butterflyfishes are strongly associated with coral and structured reef habitats, and many species specialize on small benthic prey living on or near coral colonies.',morphology:'The laterally compressed body, elongated snout and large pectoral fins support close-quarters feeding in crevices. Patterned coloration provides visual species-recognition signals and can make predators hesitate during rapid turns.',feeding:'Copperband butterflyfish commonly probe small spaces for worms and other invertebrates, using the long snout to reach prey that larger-mouthed fishes cannot easily access.',physiology:'Fine jaw control and visual targeting are more important than sustained high-speed swimming. The body plan is optimized for manoeuvring around reef branches rather than crossing open water.',life:'Butterflyfishes generally use pelagic eggs and larvae. Juveniles settle from the plankton and may occupy shallower nursery habitat before assuming adult feeding territories.',ecology:'Specialized coral-associated feeding makes butterflyfishes useful indicators of habitat structure and prey availability. Their presence can change with coral cover and reef complexity.',field:'Record the exact feeding substrate and prey-search movement. A fish hovering over coral is not automatically feeding on coral; distinguish probing from grazing, resting and territorial display.'},
+seahorse:{overview:'Seahorses are slow-moving syngnathid fishes that rely on camouflage and grasping structures rather than speed. Their prehensile tail lets them anchor in vegetation or branching habitat.',morphology:'The upright body, rigid bony plates, narrow snout and prehensile tail are distinctive adaptations. Fins are small, so locomotion is comparatively weak and precise rather than fast.',feeding:'Seahorses use a suction-feeding strike to capture tiny crustaceans and other small prey within range. They often spend long periods waiting for prey to approach.',physiology:'Their feeding mechanism creates a rapid pressure change that draws prey into the tubular snout. The body armour gives protection but also makes high-speed escape difficult.',life:'In seahorses, males brood embryos in a specialized pouch. After transfer of eggs, the male provides a protected environment until fully formed young are released.',ecology:'Dependence on structured habitat makes seahorses sensitive to loss of seagrass, mangroves and other complex shallow-water environments.',field:'Look for anchoring, head movements and short suction strikes. Avoid chasing; a long stable observation period is especially valuable because natural movement is slow.'},
+moray:{overview:'Moray eels are reef-associated predators that often spend daylight hours partly hidden in crevices. Their serpentine body lets them occupy narrow shelters that exclude many competitors.',morphology:'The elongated body lacks the obvious paired fins seen in many fishes. A second set of jaws inside the throat can move forward during feeding and helps pull prey deeper into the pharynx.',feeding:'Morays consume fishes, crustaceans and cephalopods depending on species. Many hunt at dusk or night and rely on ambush rather than sustained pursuit.',physiology:'A strong sense of smell is important in dark crevices, while pharyngeal jaws provide a specialized prey-transport system. This allows a moray to drag prey inward after an initial bite.',life:'Mating and recruitment vary among moray species; many release eggs and sperm into open water so larvae can disperse widely before settlement.',ecology:'Morays are mid-level reef predators that connect small fishes and invertebrates with larger predators. Their sheltering behavior also creates repeated associations with particular reef crevices.',field:'A visible head at a crevice does not mean aggression. Record head orientation, gill pumping, emergence timing and whether the eel leaves its refuge to hunt.'},
+lionfish:{overview:'Red lionfish are ambush predators famous for venomous dorsal spines. Their enlarged fins help them herd or corner small prey before a short feeding strike.',morphology:'The long fan-like fins make the animal visually distinctive, while rigid dorsal spines carry venom-producing tissue. Striped coloration can blend with reef shadows despite the conspicuous silhouette.',feeding:'They consume small fishes and crustaceans, often using slow approach followed by a rapid suction-feeding strike. Their broad mouth allows relatively large prey to be taken whole.',physiology:'Venom in the spines is primarily defensive rather than a mechanism for subduing prey. Suction feeding generates rapid water flow that draws prey inward.',life:'Egg masses are released into the water column and larvae become planktonic before settling. Warm-water conditions and broad diet can contribute to rapid population growth in introduced regions.',ecology:'On invaded reefs outside their native Indo-Pacific range, lionfish can become important predators of native reef fishes. That ecological effect is a classic example of how introduced predators can alter food webs.',field:'Distinguish resting from hunting posture. Track orientation toward prey and the sequence of approach, fin spreading and strike.'},
+manta:{overview:'Reef manta rays are large filter-feeding elasmobranchs that often travel between reef cleaning stations and productive feeding areas.',morphology:'Broad pectoral fins form wing-like surfaces for lift and manoeuvring. Cephalic lobes beside the mouth help direct water toward the filtering apparatus.',feeding:'Mantas filter zooplankton from seawater and can concentrate feeding where plankton becomes patchy or dense. They may adjust position and swimming pattern to exploit productive water.',physiology:'Continuous or active filter feeding moves large volumes of water through the mouth and gill-filtering structures. Large body size gives high filtration capacity but requires reliable food-rich habitat.',life:'Reproductive output is low compared with many bony fishes. A single developing embryo is commonly carried internally for a long period before birth, making population recovery slow when adults are lost.',ecology:'Cleaning stations create repeated interactions with cleaner fishes and can become important spatial anchors in reef movement patterns.',field:'Watch for changes between feeding loops and cleaning-station behavior. Record time spent circling, mouth position and interactions with cleaner fishes.'},
+whaleshark:{overview:'Whale sharks are the largest fishes and are generally filter feeders that move through warm seas where plankton and small nekton are available.',morphology:'The body is broad and streamlined, with a wide terminal mouth and a distinctive spotted pattern. Gill structures retain food particles while large volumes of water are processed.',feeding:'They can filter plankton, fish eggs, small fish and other small organisms. Surface feeding may occur where prey is concentrated near the top of the water column.',physiology:'Large size permits long-distance travel between productive areas, but high body mass creates substantial energetic demands. Sensory systems help locate patchy food in open water.',life:'Whale sharks are live-bearing, with embryos developing internally; young are small at birth but growth and maturation are slow.',ecology:'As large filter feeders, whale sharks link plankton productivity with top-level marine biomass without acting as conventional predators of large animals.',field:'Look for repeated slow arcs through a plankton patch and changes in mouth opening. Use distance and dive behavior as evidence, not only presence at the surface.'},
+cleaner:{overview:'Bluestreak cleaner wrasse specialize in removing ectoparasites, mucus and damaged tissue from client fishes. Their cleaning stations create repeatable interaction hotspots on reefs.',morphology:'The small, elongated body and distinctive lateral stripe are easy field marks. The mouth is positioned for picking small items from another fish without causing major injury during normal cleaning.',feeding:'Cleaning behavior targets parasites and organic material on client surfaces; juveniles may have different feeding opportunities and occupy different microhabitats.',physiology:'Precise visual recognition and rapid manoeuvring are important because cleaners repeatedly approach much larger fishes. Their behaviour depends on client tolerance and repeated station use.',life:'Cleaner wrasses produce pelagic eggs and larvae; local populations depend on successful settlement and suitable reef habitat.',ecology:'Cleaning can affect parasite loads and creates structured mutualistic interactions among multiple species. Cleaning stations are useful for teaching interspecific cooperation and conflict.',field:'A good record identifies both cleaner and client and documents contact. One fish merely swimming past another is not enough to claim cleaning.'},
+grouper:{overview:'Giant grouper are large ambush predators associated with complex coastal and reef habitats. Their size allows them to handle prey unavailable to smaller reef predators.',morphology:'The deep body, broad mouth and heavy head suit short explosive strikes rather than long pursuits. Camouflage and patient positioning are central parts of the hunting strategy.',feeding:'Diet can include reef fishes, crustaceans and other suitably sized prey. A grouper may wait near structure and use sudden suction feeding to capture prey.',physiology:'Large body mass and a cavernous mouth produce strong suction during a strike. Metabolism and growth are comparatively slower than those of many small reef fishes.',life:'Many groupers are sequential hermaphrodites and form spawning aggregations. Recruitment begins with pelagic eggs and larvae before juveniles settle into structured habitat.',ecology:'As upper-level reef predators, groupers can influence the abundance and behaviour of smaller fishes. Their loss can change predator-prey relationships and community structure.',field:'Hunting evidence is strongest when posture, slow approach and strike sequence are all observed. Avoid inferring feeding from prey nearby alone.'},
+mandarinfish:{overview:'Mandarinfish are small benthic reef fishes that move through coral rubble and complex substrate in search of tiny prey.',morphology:'The body is elongated with small fins suited to short, controlled movements over rubble. The skin contains mucus and chemical compounds that may discourage predation in addition to bright coloration.',feeding:'They pick tiny crustaceans and other benthic organisms from hard substrate. Constant small movements across rubble can produce a continuous series of short feeding events.',physiology:'Small body size and localized foraging reduce the need for long-distance swimming. Close association with structure provides refuge from larger predators.',life:'Spawning can occur during evening courtship near reef structure, with eggs and sperm released into the water column. Larvae develop offshore before settling.',ecology:'Mandarinfish illustrate how microhabitat complexity can support specialized feeders that would be vulnerable on open, featureless bottoms.',field:'Watch the substrate rather than the fish alone. Repeated picking movements at rubble are better feeding evidence than simply seeing the animal move.'},
+moorish_idol_v49:{overview:'Moorish idols are laterally compressed reef fishes with a long trailing dorsal filament and a small protruding mouth. They are mobile browsers that often move over reef surfaces in search of benthic food.',morphology:'A deep, narrow body and elongated filament make the silhouette distinctive. The small mouth is suited to selective picking rather than large-particle bites.',feeding:'Diet is dominated by algae, sponges and other small benthic food items depending on habitat and availability. Foraging involves repeated pecking of reef surfaces.',physiology:'The tall body and thin fins enable careful manoeuvring around coral structure. The dorsal filament is more important for display and recognition than for propulsion.',life:'Reproduction involves spawning in the water column followed by dispersal of eggs and larvae before settlement to reef habitat.',ecology:'Because it browses across living reef surfaces, the species links benthic production to mobile reef consumers and illustrates fine-scale feeding niche separation.',field:'Record the exact substrate touched by the mouth and whether the fish makes repeated pecks or simply passes through the area.'},
+titan_triggerfish_v49:{overview:'Titan triggerfish are large reef-associated predators and browsers with a powerful body and formidable jaws. They can defend small territories around feeding and nesting sites.',morphology:'The compressed body, strong front teeth and trigger-like first dorsal spine are characteristic. The spine can lock upright into the dorsal groove as a defensive structure.',feeding:'They can take hard-shelled invertebrates, smaller animals and plant material. Powerful jaw muscles allow them to bite or crush prey that many reef fishes cannot process.',physiology:'Triggerfish can brace the body using the dorsal spine and manipulate prey with strong jaws. Sensory and visual control are suited to precise foraging among reef substrate.',life:'Adults may defend nesting areas and aggressively protect eggs after spawning. Pelagic larvae disperse before juveniles recruit to reef environments.',ecology:'Predation and disturbance of reef substrate create local effects on benthic communities. Nest defence also changes fish movement around small portions of the reef.',field:'Maintain distance from nest-defense behavior. Record feeding substrate, jaw action and territorial chasing separately.'},
+emperor_angelfish_v49:{overview:'Emperor angelfish are large reef fishes that transition from juvenile ring patterns to a striped adult pattern. They browse reef surfaces and can occupy defined home areas.',morphology:'The strongly compressed body and narrow snout allow access to crevices. Adult colouration consists of bright horizontal bands and the face becomes more robust with growth.',feeding:'Adults browse sponges, tunicates and other sessile invertebrates as well as algae. The narrow mouth permits selective removal of prey from structured surfaces.',physiology:'Fine-scale visual targeting and manoeuvrability are central to feeding. Colour pattern changes during development are a conspicuous ontogenetic feature.',life:'Juveniles and adults can use somewhat different microhabitats and diets. Spawning releases eggs into the water column and larvae remain planktonic before settlement.',ecology:'Sponge and benthic-invertebrate feeding helps shape reef-surface competition and demonstrates how specialized browsers use coral architecture without being herbivores.',field:'Use juvenile/adult coloration as a developmental clue. Record what the mouth contacts because “reef browsing” can involve several distinct food types.'},
+powderblue_surgeonfish_v49:{overview:'Powder blue surgeonfish are active Indo-Pacific herbivores that often graze exposed reef surfaces and move quickly between feeding and sheltering sites.',morphology:'The laterally compressed body, yellow dorsal fin and strong caudal spine form a recognizable silhouette. The tail spine is defensive and should not be interpreted as a feeding structure.',feeding:'They consume benthic algae and associated microorganisms. Repeated grazing passes can keep algae cropped low on hard reef substrate.',physiology:'A small mouth and mobile jaws are suited to repeated scraping. The body combines precise reef manoeuvring with short bursts of speed when disturbed.',life:'Pelagic eggs and larvae disperse before settlement. Juveniles can occupy shallower or more sheltered reef habitat and change colour as they mature.',ecology:'Regular herbivory can reduce algal biomass and influence space available for coral recruitment. The species is useful in a reef-grazing food-web lesson.',field:'Track repeated substrate contacts and the patch of reef being grazed. Swimming close to coral is not sufficient evidence of grazing.'},
+coral_trout_v49:{overview:'Leopard coralgrouper, often called coral trout, are reef predators that use complex coral structure as ambush habitat.',morphology:'The robust body and broad mouth support sudden suction strikes. Colour and spot patterns can vary with age and region, so behaviour and body form also help identification.',feeding:'They eat fishes and crustaceans, often making short attacks from structure. Juvenile and adult diets can differ as body size and habitat change.',physiology:'A powerful suction-feeding mechanism allows prey capture with little chase distance. Camouflage and use of reef structure reduce the need for prolonged swimming.',life:'Spawning occurs in the water column, often with seasonal or lunar timing depending on population. Larvae drift before settling into reef habitat.',ecology:'As predators of smaller reef animals, coral trout help regulate community structure. Their abundance can also reflect fishing pressure because large groupers are valuable targets.',field:'Watch for station holding, slow orientation toward prey and the rapid strike. Do not infer predation from a grouper simply sharing space with smaller fish.'},
+sixbar_wrasse_v49:{overview:'Sixbar wrasse are active reef-associated fishes that forage across hard and soft substrate. Juveniles and adults may differ in colour and habitat use.',morphology:'The elongated body, heavy lips and wrasse-style jaw structure support picking and manipulating prey. Strong fins allow rapid turns around reef structure.',feeding:'Diet can include crustaceans, mollusks and other benthic invertebrates. Some wrasses also browse algae or small organisms from the substrate.',physiology:'Jaw protrusion and flexible mouthparts allow prey extraction from crevices. Frequent movement samples a broad reef patch rather than one fixed feeding point.',life:'Many wrasses have complex social and reproductive systems, including sex change in some lineages. Eggs and larvae are released into open water.',ecology:'Wrasses fill diverse trophic niches and help connect invertebrate production to larger predators.',field:'Record prey-search movements separately from confirmed feeding. Look for pecking, jaw protrusion or prey capture rather than only active swimming.'},
+raccoon_butterflyfish_v49:{overview:'Raccoon butterflyfish are laterally compressed coral-associated fishes that pick small benthic prey around reef structure. Their bold facial pattern is a useful field mark.',morphology:'The narrow snout and deep body support close inspection of coral surfaces. Dark facial bands and a contrasting rear-body patch help distinguish the species.',feeding:'They may take small benthic invertebrates, algae and other food items depending on habitat. Fine-scale pecking suits selective feeding on structured substrate.',physiology:'High manoeuvrability and visual targeting are more important than speed. The body shape allows tight turns between coral colonies.',life:'Pelagic spawning and larval dispersal allow populations to exchange across reefs, while juveniles settle after a planktonic phase.',ecology:'Because many butterflyfish respond to coral habitat and prey availability, changes in abundance can reflect changes in reef structure and food resources.',field:'Photographing the face and body pattern plus recording the feeding substrate gives stronger identification evidence than colour alone.'},
+oriental_sweetlips_v49:{overview:'Oriental sweetlips are reef fishes with thickened lips and bold patterns. Juveniles can look very different from adults and may swim with exaggerated drifting movements.',morphology:'The robust body, thick lips and large fins help explain the common name. Juvenile colour and swimming style can complicate identification unless age is considered.',feeding:'Adults feed mainly on benthic invertebrates and small animals around reef structure, often after dusk. Foraging tends to be associated with complex sheltering habitat.',physiology:'The body suits short-distance manoeuvring and nocturnal foraging rather than sustained pelagic travel. Large pectoral fins provide control around structure.',life:'Spawning is generally pelagic, with larvae dispersing before recruitment to reef habitat. Strong developmental colour change is part of the life history.',ecology:'Sweetlips occupy a mesopredator niche and help transfer energy from benthic invertebrates to larger reef predators.',field:'Night-time or low-light observation can reveal different behavior from daytime resting. Record whether the animal is sheltering, cruising or probing the bottom.'},
+mahi_mahi_v49:{overview:'Mahi-mahi are fast-growing pelagic predators commonly associated with floating objects, convergence zones and productive surface waters.',morphology:'The body is streamlined with a strongly forked tail and long dorsal fin. Adult males develop a pronounced forehead, while colour can shift rapidly during stress and activity.',feeding:'They consume small pelagic fishes, squid and crustaceans. Opportunistic feeding allows them to exploit prey patches around current fronts and floating habitat.',physiology:'A muscular body and efficient tail support sustained high-speed swimming. Fast growth is linked to high food intake and strong metabolic demand.',life:'Spawning can occur repeatedly and eggs are planktonic. Larvae grow quickly in warm productive waters and recruit into the pelagic food web without a prolonged benthic stage.',ecology:'Mahi-mahi are mid-to-upper trophic predators that convert small pelagic biomass into fast-growing fish biomass and are themselves prey for larger pelagic hunters.',field:'Look for repeated surface-oriented pursuit and rapid directional changes near prey or floating structure. Colour flashes are useful but change quickly.'},
+indo_pacific_sailfish_v49:{overview:'Indo-Pacific sailfish are highly mobile billfishes adapted to open-water pursuit. The tall dorsal fin can be folded or raised and contributes strongly to manoeuvring and visual display.',morphology:'The elongated bill, streamlined body and sail-like dorsal fin create a distinctive profile. Pectoral and dorsal fins provide fine control during rapid turns.',feeding:'They pursue schooling fishes and squid, sometimes using body and fin movements to disrupt or isolate prey. Hunting can involve coordinated movements around dense prey patches.',physiology:'The body is designed for high swimming performance, with a large caudal peduncle and powerful tail. Billfish physiology supports rapid acceleration over short distances.',life:'Pelagic spawning produces eggs and larvae that drift in surface waters. Juveniles grow rapidly in warm productive regions before entering broader pelagic habitat.',ecology:'Sailfish sit high in pelagic food webs and connect schools of small fishes with larger predators. Distribution can track productivity and temperature fronts.',field:'Record attack sequence, prey-school structure and fin posture. A raised dorsal fin alone is not proof of feeding.'},
+swordfish_v49:{overview:'Swordfish are large pelagic predators capable of moving between surface and deep waters. Their flattened bill and powerful tail support rapid attacks on mobile prey.',morphology:'The long upper bill, rigid body and lunate tail are characteristic. The first dorsal fin is more prominent in younger fish and changes relative to body size.',feeding:'They eat fishes and squid across a broad depth range. Deep daytime foraging and shallower night movements can expose them to very different prey fields.',physiology:'Specialized muscles and vascular arrangements help retain heat in tissues involved in swimming and vision. This supports active predation in cold deep water as well as warmer surface layers.',life:'Spawning occurs in warm waters and eggs are pelagic. Larvae pass through rapid growth stages before joining the open-ocean food web.',ecology:'Swordfish connect deep and surface trophic pathways by moving through large vertical depth ranges and consuming mobile prey across both zones.',field:'Depth context matters. Record whether a sighting is surface, twilight or deep-water because the same species can use very different habitats through the day.'},
+ocean_sunfish_v49:{overview:'Ocean sunfish have an unusual disk-like body and can reach enormous sizes. They occur in temperate and tropical seas and may move vertically through the water column.',morphology:'The body is laterally compressed and truncated at the rear, where enlarged dorsal and anal fins provide propulsion. The skin is thick and the small mouth suits a mixed diet.',feeding:'Food includes gelatinous animals and a wide range of other prey, with diet varying by region and life stage. Low-energy prey can require substantial feeding volume.',physiology:'Vertical movements expose the fish to strong temperature gradients. Large body size and the body’s surface-to-volume relationship influence heat exchange and activity patterns.',life:'They produce extremely large numbers of small eggs relative to adult body size, although survival to adulthood is very low. Larvae look radically different from adults.',ecology:'Sunfish consume gelatinous organisms and also transport energy between surface and deeper habitats through vertical movements and long-distance travel.',field:'Record orientation, fin-beat pattern and depth. Surface basking and active swimming are different behaviors.'},
+shortfin_mako_v49:{overview:'Shortfin makos are fast pelagic sharks adapted to active pursuit. They occupy warm-temperate and tropical waters and can cover large distances.',morphology:'The fusiform body, long pectoral fins and crescent tail minimize drag. The pointed snout and large teeth form an unmistakable high-speed predator profile.',feeding:'Diet includes fishes and cephalopods, with active pursuit of fast prey. Feeding can occur across a wide range of depths depending on prey distribution.',physiology:'A powerful aerobic swimming system supports sustained movement and rapid bursts. Regional endothermy helps maintain muscle performance above ambient water temperature in key tissues.',life:'Reproduction is viviparous, with embryos developing internally. Few pups and slow maturation increase sensitivity to fishing mortality.',ecology:'As a high-level pelagic predator, makos help structure prey communities across broad spatial scales.',field:'Distance is critical because this species travels rapidly. Observe movement direction, burst swimming and prey pursuit rather than attempting close approaches.'},
+kelp_greenling_v49:{overview:'Kelp greenling are temperate Northeast Pacific fishes closely associated with rocky reefs and kelp forests. They can remain near structure for long periods and make short feeding excursions.',morphology:'The body is elongated with mottled colour patterns that blend into rocky substrate and vegetation. The dorsal fin runs along much of the body, giving stability near uneven surfaces.',feeding:'Diet includes small crustaceans, mollusks, worms and other benthic prey. Foraging often consists of short pecks among kelp holdfasts and rock crevices.',physiology:'The body plan favors manoeuvring through complex habitat rather than long pelagic travel. Camouflage reduces detection by both prey and predators.',life:'Eggs are demersal and can be associated with guarded nesting sites in some populations. Juveniles and adults use structured shallow habitat but shift prey as they grow.',ecology:'Kelp greenling are part of the diverse groundfish assemblage that links benthic invertebrates to larger fishes and marine mammals.',field:'Rock versus kelp habitat should be logged separately. Repeated pecks into crevices are stronger evidence of foraging than simple station holding.'},
+opaleye_v49:{overview:'Opaleye are schooling herbivorous fishes of rocky Pacific reefs and kelp-associated habitat. They browse algal growth while using coastal structure for refuge.',morphology:'The deep oval body and high-contrast eye ring are useful field marks. Robust jaws allow repeated bites on algal surfaces.',feeding:'They consume algae and other plant-associated material, often browsing over rocks and kelp-covered areas. Juvenile diets can be broader than adult diets.',physiology:'A strong pharyngeal apparatus helps process plant-rich food after ingestion. Schooling provides many eyes for predator detection while grazing in exposed habitat.',life:'Spawning releases eggs and sperm into the water column. Juveniles later recruit to shallow coastal habitats and change habitat use as body size increases.',ecology:'Opaleye transfer energy from kelp and algal production to higher trophic levels and participate in the nearshore herbivore guild.',field:'Track school cohesion and grazing patch. A cluster over kelp is not automatically feeding; record repeated bite movements on the substrate.'},
+california_flounder_v49:{overview:'California halibut are predatory flatfishes that spend much of their life close to sandy or muddy coastal bottoms. Their body architecture is built around camouflage and ambush.',morphology:'During development, one eye migrates to the upper side and the body becomes strongly flattened. The upper surface is pigmented for camouflage while the lower side is pale.',feeding:'Juveniles eat small invertebrates and fishes; adults can take larger fishes and squid. Hunting involves remaining still and striking laterally when prey passes close by.',physiology:'The asymmetric body minimizes height above the substrate and reduces visibility. Fine adjustments allow partial burial in sediment.',life:'Pelagic eggs and larvae drift before metamorphosis. As juveniles settle, habitat use changes from planktonic to demersal and later expands across the shelf.',ecology:'Flatfishes connect shallow nursery habitats with adult coastal food webs. Their life cycle illustrates strong habitat shifts with development.',field:'Camouflage is the key observation challenge. Search for eye position, fin outline and sudden lateral strikes rather than relying on colour alone.'},
+atlantic_bluefin_v49:{overview:'Atlantic bluefin tuna are large, highly migratory predators capable of crossing ocean basins. They combine sustained swimming with repeated movements between feeding and spawning areas.',morphology:'The torpedo-shaped body, crescent tail and multiple finlets reduce drag at high speed. Dark dorsal coloration contrasts with a lighter underside.',feeding:'They consume fishes, squid and crustaceans and can switch prey with region. Feeding often follows fronts and schools where prey density is high.',physiology:'Bluefin tuna possess regional endothermy and an advanced counter-current heat-exchange system that helps keep swimming muscles and viscera warmer than surrounding water.',life:'Spawning occurs in warm, seasonally favorable regions, while adults migrate widely to productive feeding grounds. Reproductive success depends on survival and condition of large mature fish.',ecology:'As an apex pelagic predator, bluefin redistribute energy over enormous spatial scales and connect multiple regional food webs.',field:'Migration context matters. Record school size, direction and temperature rather than interpreting a single sighting as a resident population.'},
+blue_shark_v49:{overview:'Blue sharks are slender oceanic predators that travel widely through temperate and tropical waters. They often show size- or sex-associated spatial segregation.',morphology:'The long pectoral fins, narrow body and deep blue dorsal colour create a distinctive silhouette. The caudal fin is built for efficient long-distance cruising.',feeding:'Diet includes small pelagic fishes and squid, with carrion also taken opportunistically. Feeding opportunities are often linked to productive fronts and schooling prey.',physiology:'An efficient swimming form minimizes energy cost during continuous travel. Electroreception and olfaction complement vision when locating prey.',life:'Viviparous reproduction produces live young after internal development. Growth and maturity are relatively slow compared with many small pelagic fishes.',ecology:'Blue sharks connect mesopelagic and epipelagic prey to larger predators and are themselves subject to bycatch in pelagic fisheries.',field:'Use movement style and body proportions for identification. Long straight cruising is a more characteristic observation than rapid reef-style turning.'},
+saithe_v49:{overview:'Saithe are North Atlantic cod relatives associated with shelf waters, rocky structure and productive current fronts. They can move between coastal and deeper waters seasonally.',morphology:'Three dorsal fins, a forked tail and a pale lateral line distinguish the cod-like body plan. The streamlined body supports active schooling and midwater movement.',feeding:'Juveniles rely more on crustaceans and small prey, while larger fish take fishes and larger invertebrates. Diet changes with body size and local prey availability.',physiology:'A swim bladder and flexible body allow the fish to occupy different parts of the water column. Schooling can reduce individual predation risk while locating prey patches.',life:'Spawning releases pelagic eggs. Larvae and juveniles develop in the plankton and coastal zone before joining older fish on shelf habitats.',ecology:'Saithe transfer energy from small planktonic and benthic prey to larger predators and support important commercial fisheries in the North Atlantic.',field:'Record depth and school structure. Changes from loose feeding groups to dense coordinated schools can indicate changes in predator pressure or prey distribution.'},
+capelin_v49:{overview:'Capelin are small cold-water forage fishes that form dense schools and play a central role in high-latitude food webs. Abundance can vary sharply with ocean conditions and recruitment.',morphology:'The slender, silvery body is built for schooling and efficient movement. The streamlined shape allows large groups to move rapidly along productive fronts.',feeding:'They feed mainly on zooplankton such as copepods and euphausiids, matching their distribution to seasonal plankton production.',physiology:'High schooling density and synchronized swimming improve predator detection and access to plankton patches. Energy storage can support seasonal migration and spawning.',life:'Spawning occurs in coastal or shallow shelf settings in many populations. Eggs and larvae begin life near productive coastal water before juveniles return to pelagic schooling habitat.',ecology:'Capelin are a critical forage link between plankton and cod, seabirds, seals and whales. Changes in capelin can cascade to higher trophic levels.',field:'School shape and depth are valuable evidence. Track whether fish are feeding in a compact patch or moving directionally as part of migration.'},
+greenland_halibut_v49:{overview:'Greenland halibut are deep-water flatfishes that combine benthic and pelagic habits. Adults can forage above the seabed rather than remaining completely flat on the bottom.',morphology:'The asymmetric flatfish body has both eyes on the upper-facing side, while a dark upper surface provides countershading. Fins form a continuous margin around much of the body.',feeding:'Diet includes fishes, capelin, prawns and other invertebrates. Benthopelagic behavior lets it intercept prey above the bottom as well as on it.',physiology:'The species is adapted to cold deep water and can maintain activity under high pressure. A lipid-rich body supports long periods of deep-water swimming.',life:'Spawning occurs in deep water and eggs and larvae develop in the water column before juveniles settle. Slow growth makes age structure important for fisheries management.',ecology:'Greenland halibut connect shelf/slope prey with larger deep-water predators and fisheries, illustrating a species that crosses benthic-pelagic boundaries.',field:'Depth is essential. Note whether the fish is resting on sediment or swimming above it before assigning a benthic feeding mode.'},
+saffron_cod_v49:{overview:'Saffron cod are cold-water cod relatives found across Arctic and North Pacific coastal and shelf environments. They are flexible feeders in regions with strong seasonal change.',morphology:'The cod-like body has multiple dorsal fins and a small chin barbel. Muted coloration blends with shallow shelf and bottom habitat.',feeding:'They consume crustaceans, fishes and benthic prey, shifting diet as seasonal abundance changes. Juveniles depend more strongly on small invertebrates.',physiology:'Cold-water metabolism, compact body form and flexible habitat use help the species persist across brackish-influenced coastal waters and marine shelves.',life:'Spawning is seasonal and eggs and larvae use coastal and shelf water masses. Juvenile growth is tied closely to seasonal food availability.',ecology:'Saffron cod are both predators and prey within Arctic and sub-Arctic food webs, linking small benthic organisms to seals, larger fishes and fisheries.',field:'Look for the chin barbel and multi-dorsal-fin profile. Record whether prey searching occurs over sediment, rocks or midwater.'},
+greenland_shark_v49:{overview:'Greenland sharks are very slow-growing deep-water sharks associated with Arctic and North Atlantic environments. Their life history is among the slowest known for vertebrates.',morphology:'The body is compact and heavy with small fins relative to body mass. Reduced visual clarity is compensated by other sensory systems suited to dark deep water.',feeding:'They eat fish, skates, sharks, seals, squid and carrion. Feeding is opportunistic and can include both active prey and dead animals.',physiology:'Cold temperatures and slow metabolism are consistent with a low-energy lifestyle. Some individuals may host bioluminescent organisms around the eyes, an unusual but poorly understood aspect of their ecology.',life:'Growth and sexual maturation are extremely slow; radiocarbon dating of eye lenses has revealed exceptional longevity. Very low reproductive turnover makes adult survival especially important.',ecology:'Long life and slow replacement make this species a strong example of how life-history strategy affects vulnerability to human mortality.',field:'Do not infer hunting from slow movement. Distinguish cruising, resting, scavenging and active pursuit when possible.'},
+arctic_skate_v49:{overview:'Arctic skates are cold-water benthic predators living on deep shelf and slope bottoms. Their broad disc and slow undulating movement suit a life close to the seabed.',morphology:'The pectoral fins form a broad disc while the narrow tail extends behind the body. The upper surface is patterned for camouflage over sediment and rock.',feeding:'They take bottom fishes and invertebrates, often using short movements to search sediment. Resting on the seabed can reduce energetic costs.',physiology:'The flattened body minimizes profile height and helps maintain close contact with the substrate. Cold-water physiology supports activity in near-freezing conditions.',life:'Skates lay egg cases rather than giving birth to live young. Development occurs on or near the seabed over a prolonged period.',ecology:'Slow reproduction and benthic development can make skates sensitive to disturbance and bycatch.',field:'Record fin undulation, bottom contact and prey-search behavior. A stationary skate should not automatically be coded as inactive; resting is meaningful behavior.'},
+antarctic_silverfish_v49:{overview:'Antarctic silverfish are small pelagic schooling fishes that are important prey for penguins, seals and larger fishes in coastal Antarctic ecosystems.',morphology:'The silvery body, large eye and streamlined form support life in relatively dark, cold shelf waters. Schooling provides feeding efficiency and predator dilution.',feeding:'They consume krill and other zooplankton, linking plankton production with higher trophic levels. Feeding opportunities vary with seasonal productivity and sea-ice conditions.',physiology:'Cold-adapted metabolism supports active swimming in Antarctic water. Light, temperature and sea-ice distribution strongly affect where productive feeding layers occur.',life:'Eggs and larvae are pelagic. Early life stages depend heavily on appropriate planktonic food and transport by local circulation.',ecology:'The species is an important forage-fish link in Southern Ocean food webs and demonstrates how one small fish can connect krill-rich production to many predators.',field:'Record school depth relative to sea ice and productive water. School density and direction may change quickly with predator presence or plankton patches.'},
+black_rockcod_v49:{overview:'Antarctic rockcod are demersal notothenioid fishes that live close to rocky and structured Antarctic shelf habitats.',morphology:'The deep body and strong fins suit benthic manoeuvring. Many notothenioids have physiological adaptations for life in very cold water, including antifreeze proteins.',feeding:'Diet includes crustaceans, fishes and other benthic prey, with plant material sometimes taken opportunistically. Adults can switch prey as seasonal availability changes.',physiology:'Antifreeze glycoproteins help prevent ice crystal growth in body fluids at subzero seawater temperatures. Lipid stores and cold-adapted enzymes support metabolism in a demanding environment.',life:'Eggs and juveniles are associated with seasonal Antarctic habitat and productivity. Development depends on strongly seasonal food webs and temperature.',ecology:'Rockcod transfer energy from benthic prey to larger Antarctic predators and illustrate how notothenioids diversified in cold coastal habitats.',field:'Look for close association with bottom structure and short station-holding movements. Distinguish bottom searching from pelagic cruising.'},
+mackerel_icefish_v49:{overview:'Mackerel icefish are pelagic-to-benthic Southern Ocean predators that follow dense prey patches such as krill. They belong to the channichthyid icefish group.',morphology:'The body is streamlined and relatively delicate, with fins suited to sustained swimming. Like other icefishes, it lacks functional haemoglobin and compensates with a large vascular system and heart.',feeding:'Krill and mysids are major prey, so feeding distribution can track seasonal plankton and krill concentrations.',physiology:'The absence of red blood cells reduces blood viscosity but also reduces oxygen-carrying capacity. Large gills, heart and circulating blood volume help compensate in oxygen-rich cold seawater.',life:'Spawning is seasonal and larvae remain pelagic for an extended period before recruitment. Recruitment is tightly linked to plankton production timing.',ecology:'Icefish are key consumers of krill and are themselves prey for seals, penguins and larger fishes, making them central to Antarctic shelf food-web transfers.',field:'Record prey-field context and depth. A drifting fish above the bottom may still be part of a benthopelagic food web rather than a true open-ocean species.'},
+patagonian_toothfish_v49:{overview:'Patagonian toothfish are large deep-water predators of the Southern Ocean and sub-Antarctic shelves. Their life history is slow and closely tied to deep-water habitat.',morphology:'A robust body, large mouth and strong jaw muscles support capture of fishes and squid. Dark colouration and a streamlined profile suit dim deep-water conditions.',feeding:'They eat fishes and cephalopods, often taking prey above or near the seabed. Juveniles use somewhat shallower and more pelagic habitats before adults move deeper.',physiology:'Cold-adapted lipid storage provides buoyancy and energy reserves in deep water. A low-energy lifestyle supports long-range movements without constant high-speed swimming.',life:'Spawning occurs at depth and juveniles gradually shift habitat as they grow. Slow growth and long lifespan make age structure important when evaluating population impacts.',ecology:'Toothfish are upper-level predators in deep Southern Ocean food webs and connect mesopelagic prey with deep benthic and pelagic ecosystems.',field:'Depth, substrate and prey type should be recorded together. A “deep-water predator” is stronger evidence when feeding or patrol behavior is actually observed.'}
+};
+const REGION_BIO_V50={
+coral_triangle:'Coral Triangle reef communities combine very high habitat diversity with strong species interactions. Shallow reefs, lagoons and seagrass beds create different light, flow and refuge conditions; compare microhabitats rather than treating the region as homogeneous. Key research themes include herbivory, coral-associated feeding, cleaning stations and habitat partitioning.',
+great_barrier:'The Great Barrier Reef contains coral reefs plus mangroves, seagrass, shelf and deeper habitats. Reef Authority describes biodiversity as spanning ecosystems, species and genetic variation, with fish assemblages changing with habitat and depth. This region is useful for comparing how grazing, predation and shelter depend on reef structure.',
+central_pacific:'The open Central Pacific is organized by water-column structure rather than fixed bottom habitat. Light, temperature, currents and patchy productivity can create temporary feeding zones for pelagic fishes and filter feeders. Research observations should include depth, direction of travel and evidence of prey concentration.',
+california_current:'The California Current is a highly productive eastern North Pacific ecosystem driven in part by seasonal upwelling of cold, nutrient-rich water. NOAA notes that upwelling supports krill, anchovy, squid and higher trophic levels, while current conditions, temperature and climate variability alter habitat and species distributions. Groundfishes also shift from pelagic juvenile stages to shelf and slope habitats.',
+north_atlantic:'North Atlantic shelf ecosystems vary strongly with season, circulation and plankton production. The same species can occupy different depth zones through the year, so field notes should combine species identity with temperature, depth, current and school behavior rather than using a species as a fixed habitat label.',
+arctic_shelf:'Arctic shelf ecology is shaped by extreme seasonality in light and sea-ice cover. Under-ice algae and phytoplankton can form the base of seasonal production, while fish and invertebrates respond to changing prey fields and water masses. The most informative observations pair biological behavior with ice, light and temperature context.',
+antarctic_peninsula:'The Antarctic Peninsula connects seasonal sea ice, shelf waters, strong circulation and krill-centered food webs. Small forage fishes such as Antarctic silverfish and icefish move energy upward to penguins, seals and larger predators. Seasonal timing is essential: the same location can support very different biological activity across the year.',
+maldives_reef:'Maldives reef habitats range from shallow coral frameworks and lagoons to reef slopes and channels. Spatial differences in flow, depth and coral structure create different feeding and shelter opportunities. Reef-cleaning interactions and pelagic visitors provide useful examples of how local habitat connects to larger ocean processes.'
+};
+function findSpecies(){return typeof species!=='undefined'?species:[];}
+for(const [id,p] of Object.entries(BIO_V50)){const s=findSpecies().find(x=>x.id===id);if(s)s.biologyDeep=p;}
+const oldSelect=window.selectCreature;
+if(typeof oldSelect==='function'&&!oldSelect.__v50Deep){
+ const wrapped=function(c){
+   const ret=oldSelect(c);
+   try{const s=findSpecies().find(x=>x.id===c?.sp),b=s?.biologyDeep,box=document.getElementById('sInfo');if(s&&b&&box){box.innerHTML=`<section><div class="k">Habitat</div>${s.habitat}<br><strong>Depth:</strong> ${s.depth} · <strong>Adult size:</strong> ${s.size}</section><section><div class="k">Scientific overview</div>${b.overview}</section><section><div class="k">Identification & morphology</div>${b.morphology}</section><section><div class="k">Feeding biology</div>${b.feeding}</section><section><div class="k">Physiology & adaptation</div>${b.physiology}<br><strong>Existing field note:</strong> ${s.adapt}</section><section><div class="k">Behaviour</div>${s.behavior}<br><strong>Live observation:</strong> ${typeof getBehavior==='function'?getBehavior(c):''}</section><section><div class="k">Life history & reproduction</div>${b.life}</section><section><div class="k">Ecological role</div>${b.ecology}</section><section><div class="k">Field research note</div>${b.field}</section><section><div class="k">Conservation</div>${s.conservation}</section><section><div class="source">Reference base · ${s.source} · Extended biology: FishBase / NOAA educational species accounts where applicable.</div></section>`;}}catch(e){}return ret;
+ };
+ wrapped.__v50Deep=true;window.selectCreature=wrapped;
+}
+const grid=document.getElementById('speciesGrid');
+if(grid&&!grid.__v50CollectionDirect){grid.addEventListener('click',e=>{const card=e.target.closest?.('.card');if(!card||card.classList.contains('locked'))return;setTimeout(()=>document.getElementById('ency')?.classList.remove('open'),0);});grid.__v50CollectionDirect=true;}
+for(const [rid,text] of Object.entries(REGION_BIO_V50)){const r=window.__OCEAN_V16_WORLD?.regions?.[rid];if(r){r.scienceProfile=text;r.lesson=(r.lesson||'').split(' [V50 BIOLOGY]')[0]+' [V50 BIOLOGY] '+text;}}
+window.__OCEAN_V50={version:'50.0.0',deepProfiles:Object.keys(BIO_V50).length,collectionDirectOpen:true,regionProfiles:Object.keys(REGION_BIO_V50)};
+window.__OCEAN_V50_READY=true;
+})();
+</script>
+
+<!-- OCEAN EXPLORER V51 — COLLECTION BIOLOGY ACCESS + INFORMATION LAYOUT SAFETY -->
+<style id="ocean-v51-collection-layout">
+/*
+  V51 rules:
+  - Existing UI/UX, renderer, controls and gameplay remain untouched.
+  - Only the existing collection cards and existing species/region information
+    containers receive safer sizing, scrolling and collision handling.
+*/
+#right.v31SpeciesPanel,
+#right.v40SpeciesPanel{
+  min-height:0!important;
+  overflow:hidden!important;
+}
+#right.v31SpeciesPanel #speciesBody,
+#right.v40SpeciesPanel #speciesBody{
+  min-height:0!important;
+  max-height:calc(100vh - 188px)!important;
+  overflow-x:hidden!important;
+  overflow-y:auto!important;
+  scrollbar-gutter:stable;
+  padding-right:6px!important;
+}
+#right.v31SpeciesPanel #sInfo,
+#right.v40SpeciesPanel #sInfo{
+  min-width:0!important;
+  overflow:visible!important;
+  padding-right:2px!important;
+  overflow-wrap:anywhere!important;
+}
+#right.v31SpeciesPanel #sInfo section,
+#right.v40SpeciesPanel #sInfo section{
+  position:relative!important;
+  min-width:0!important;
+  height:auto!important;
+  max-height:none!important;
+  overflow:visible!important;
+  overflow-wrap:anywhere!important;
+  word-break:normal!important;
+  white-space:normal!important;
+  contain:layout style;
+}
+#right.v31SpeciesPanel #sInfo .v31Hero,
+#right.v40SpeciesPanel #sInfo .v31Hero,
+#right.v31SpeciesPanel #sInfo .v40ContactHero,
+#right.v40SpeciesPanel #sInfo .v40ContactHero,
+#right.v31SpeciesPanel #sInfo .v40Ask,
+#right.v40SpeciesPanel #sInfo .v40Ask,
+#right.v31SpeciesPanel #sInfo .v40MetricStrip,
+#right.v40SpeciesPanel #sInfo .v40MetricStrip,
+#right.v31SpeciesPanel #sInfo .v31Grid,
+#right.v40SpeciesPanel #sInfo .v31Grid{
+  position:relative!important;
+  z-index:1!important;
+  min-width:0!important;
+}
+#right.v31SpeciesPanel #sInfo .v31Grid,
+#right.v40SpeciesPanel #sInfo .v31Grid{
+  align-items:stretch!important;
+}
+#right.v31SpeciesPanel #sInfo .v31Cell,
+#right.v40SpeciesPanel #sInfo .v31Cell,
+#right.v40SpeciesPanel #sInfo .v40Metric{
+  min-width:0!important;
+  overflow:hidden!important;
+}
+#right.v31SpeciesPanel #sInfo .v31Cell .v,
+#right.v40SpeciesPanel #sInfo .v31Cell .v,
+#right.v40SpeciesPanel #sInfo .v40Metric .v{
+  white-space:normal!important;
+  overflow-wrap:anywhere!important;
+  word-break:break-word!important;
+}
+#right.v31SpeciesPanel #sInfo .v29EvidenceWrap,
+#right.v40SpeciesPanel #sInfo .v29EvidenceWrap,
+#right.v31SpeciesPanel #sInfo .v29Evidence,
+#right.v40SpeciesPanel #sInfo .v29Evidence,
+#right.v31SpeciesPanel #sInfo .v40HintRow,
+#right.v40SpeciesPanel #sInfo .v40HintRow{
+  position:relative!important;
+  z-index:1!important;
+  min-width:0!important;
+}
+
+/* The collection remains a modal; discovered cards open the existing species dossier. */
+#ency .modal{
+  min-height:0!important;
+  overflow:hidden!important;
+  display:flex!important;
+  flex-direction:column!important;
+}
+#encyGridWrap{
+  min-height:0!important;
+  overflow-x:hidden!important;
+  overflow-y:auto!important;
+  scrollbar-gutter:stable;
+}
+#speciesGrid{
+  align-content:start!important;
+}
+#speciesGrid .card{
+  min-width:0!important;
+  overflow:hidden!important;
+  overflow-wrap:anywhere!important;
+}
+#speciesGrid .card h3,
+#speciesGrid .card p,
+#speciesGrid .card .mini,
+#speciesGrid .card .meta{
+  min-width:0!important;
+  overflow-wrap:anywhere!important;
+  word-break:normal!important;
+}
+#speciesGrid .card:not(.locked){
+  cursor:pointer!important;
+}
+
+/* Prevent the pre-existing region biology window from sitting underneath the species dossier. */
+body.oeSpeciesProfileOpen #v31RegionBioPanel.on{
+  right:calc(18px + 360px + 14px)!important;
+}
+@media(max-width:1160px) and (min-width:901px){
+  body.oeSpeciesProfileOpen #v31RegionBioPanel.on{
+    right:calc(18px + 352px + 12px)!important;
+    width:min(330px,calc(100vw - 410px))!important;
+  }
+}
+@media(max-width:900px){
+  #right.v31SpeciesPanel,
+  #right.v40SpeciesPanel{
+    width:min(340px,calc(100vw - 20px))!important;
+    max-height:calc(100vh - 104px)!important;
+  }
+  #right.v31SpeciesPanel #speciesBody,
+  #right.v40SpeciesPanel #speciesBody{
+    max-height:calc(100vh - 188px)!important;
+  }
+  /* On small screens, never stack two informational overlays on top of one another. */
+  body.oeSpeciesProfileOpen #v31RegionBioPanel.on{
+    left:10px!important;
+    right:auto!important;
+    top:auto!important;
+    bottom:10px!important;
+    width:min(300px,calc(100vw - 30px))!important;
+    max-height:34vh!important;
+  }
+}
+@media(max-width:560px){
+  #right.v31SpeciesPanel,
+  #right.v40SpeciesPanel{
+    width:calc(100vw - 16px)!important;
+    right:8px!important;
+    top:86px!important;
+    max-height:calc(100vh - 94px)!important;
+  }
+  #right.v31SpeciesPanel #speciesBody,
+  #right.v40SpeciesPanel #speciesBody{
+    max-height:calc(100vh - 178px)!important;
+  }
+  #right.v31SpeciesPanel #sInfo .v31Grid,
+  #right.v40SpeciesPanel #sInfo .v31Grid{
+    grid-template-columns:1fr!important;
+  }
+  body.oeSpeciesProfileOpen #v31RegionBioPanel.on{
+    width:calc(100vw - 24px)!important;
+    max-height:28vh!important;
+  }
+}
+</style>
+<script id="ocean-v51-collection-biology-access">
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V51_READY)return;
+
+  const $=id=>document.getElementById(id);
+  const safe=(fn,f)=>{try{return fn()}catch(e){return f}};
+  const speciesList=()=>Array.isArray(window.species)?window.species:[];
+  const discoveredSet=()=>window.discovered instanceof Set?window.discovered:null;
+
+  /* Mark the existing right-side dossier as the active information surface. */
+  const syncProfileCollision=()=>{
+    try{
+      const p=$('right');
+      document.body.classList.toggle('oeSpeciesProfileOpen',!!p?.classList.contains('show'));
+    }catch(e){}
+  };
+  const observerTarget=$('right');
+  if(observerTarget)new MutationObserver(syncProfileCollision).observe(observerTarget,{attributes:true,attributeFilter:['class']});
+  syncProfileCollision();
+
+  /* Collection cards: locked species remain inaccessible; discovered species open
+     the pre-existing species dossier directly and safely provide a preview subject
+     when that species is not currently spawned in the active region. */
+  function safeCollectionSubject(sp){
+    const live=safe(()=>Array.isArray(window.creatures)?window.creatures.find(c=>c?.sp===sp.id):null,null);
+    if(live)return live;
+    const px=safe(()=>Number(window.player?.x)||0,0);
+    const py=safe(()=>Number(window.player?.y)||0,0);
+    return {
+      sp:sp.id,x:px+70,y:py,vx:0,vy:0,
+      motion:'static',mode:'static',mood:'CALM',seed:1,dir:1,s:1,
+      __oeCollectionPreview:true
+    };
+  }
+
+  function wireCollection(){
+    const grid=$('speciesGrid');
+    if(!grid||grid.__v51CollectionWired)return;
+    grid.__v51CollectionWired=true;
+    grid.addEventListener('click',e=>{
+      const card=e.target.closest?.('.card');
+      if(!card||card.classList.contains('locked'))return;
+      const name=card.querySelector('h3')?.textContent?.trim();
+      const sp=speciesList().find(s=>s.name===name);
+      const disc=discoveredSet();
+      if(!sp||!disc?.has(sp.id))return;
+
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      /* Close the collection first so its modal can never cover the biology dossier. */
+      $('ency')?.classList.remove('open');
+      document.body.classList.remove('oeEncyOpen');
+
+      const subject=safeCollectionSubject(sp);
+      if(typeof window.__OCEAN_V40_SELECT==='function') safe(()=>window.__OCEAN_V40_SELECT(subject),null);
+      else safe(()=>window.selectCreature?.(subject),null);
+      safe(()=>{
+        const right=$('right');
+        right?.classList.add('show','v31SpeciesPanel','v40SpeciesPanel');
+        right?.classList.remove('oeHiddenPanel');
+        const toggle=right?.querySelector('.speciesToggle');
+        if(toggle&&right&&!right.classList.contains('expandedSpecies')){
+          right.classList.add('compact');
+          toggle.textContent='⌄';
+        }
+      },null);
+      syncProfileCollision();
+      safe(()=>window.__OCEAN_V51_LAST_COLLECTION_PROFILE=sp.id,null);
+    },true);
+  }
+
+  wireCollection();
+
+  /* V5/V50 both rebuild the grid. Rewire automatically without changing their UI. */
+  const gridHost=$('speciesGrid');
+  if(gridHost){
+    new MutationObserver(()=>wireCollection()).observe(gridHost,{childList:true});
+  }
+
+  /* Keep the existing collection copy explicitly clear that only discovered
+     species can be opened. No new visual component is introduced. */
+  function patchCollectionText(){
+    const sub=document.querySelector('#ency .sub');
+    if(sub&&/Full field notes/.test(sub.textContent||'')){
+      sub.textContent='Collected species · select a discovered fish to open its full biological dossier.';
+    }
+  }
+  patchCollectionText();
+  const enc=$('ency');
+  if(enc)new MutationObserver(patchCollectionText).observe(enc,{subtree:true,childList:true,characterData:true});
+
+  window.__OCEAN_V51={version:'51.0.0',collectionDirectProfile:true,layoutSafe:true};
+  window.__OCEAN_V51_READY=true;
+})();
+</script>
+
+<!-- OCEAN EXPLORER V52 — REALISTIC COLLECTION FISH ART -->
+<style id="ocean-v52-collection-fish-art">
+/* V52: visual-only enhancement of the existing collection artwork slot.
+   No collection geometry, typography, controls or gameplay flow is changed. */
+#speciesGrid .card .emoji.oeFishThumbHost{
+  font-size:0!important;
+  line-height:0!important;
+  overflow:hidden!important;
+}
+#speciesGrid .card .emoji .oeFishThumb{
+  display:block!important;
+  width:76px!important;
+  height:36px!important;
+  margin:0 auto!important;
+  max-width:100%!important;
+}
+#speciesGrid .card .emoji .oeFishThumbCanvas{
+  display:block!important;
+  width:76px!important;
+  height:36px!important;
+}
+</style>
+<script id="ocean-v52-collection-fish-art">
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V52_READY)return;
+
+  const $=id=>document.getElementById(id);
+  const list=()=>Array.isArray(window.species)?window.species:[];
+  const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+  /* These aliases deliberately reuse the game's own audited in-world renderers.
+     They are not copied external sprites. */
+  const ART_ALIAS={
+    moorish_idol_v49:'moorish_idol',
+    titan_triggerfish_v49:'titan_trigger',
+    emperor_angelfish_v49:'emperor_angel',
+    powderblue_surgeonfish_v49:'powder_blue_tang',
+    coral_trout_v49:'coral_trout',
+    sixbar_wrasse_v49:'regal_angel',
+    raccoon_butterflyfish_v49:'regal_angel',
+    oriental_sweetlips_v49:'coral_trout',
+    mahi_mahi_v49:'mahi_mahi',
+    indo_pacific_sailfish_v49:'sailfish',
+    swordfish_v49:'swordfish',
+    ocean_sunfish_v49:'ocean_sunfish',
+    kelp_greenling_v49:'opaleye',
+    california_flounder_v49:'calif_halibut',
+    atlantic_bluefin_v49:'giant_trevally',
+    saithe_v49:'wolffish',
+    greenland_halibut_v49:'greenland_halibut',
+    saffron_cod_v49:'wolffish',
+    antarctic_silverfish_v49:'silverfish',
+    black_rockcod_v49:'marbled_rockcod',
+    mackerel_icefish_v49:'mackerel_icefish',
+    patagonian_toothfish_v49:'wolffish'
+  };
+
+  const isFish=s=>{
+    if(!s)return false;
+    const tx=String(s.taxonomy||'');
+    const group=String(s.group||'').toLowerCase();
+    const style=String(s.style||'').toLowerCase();
+    return /Actinopterygii|Chondrichthyes/i.test(tx)
+      || group.includes('fish')
+      || /fish|shark|ray|tang|wrasse|grouper|trigger|angelfish|surgeon|herring|cod|halibut|sardine|salmon|tuna|sailfish|swordfish|sunfish|icefish|rockcod|sweetlips|butterfly|pelagic|reef_fish|deep_fish|flatfish/i.test(style)
+      || s.id==='fish';
+  };
+
+  const familyFor=s=>{
+    const id=String(s?.id||'').toLowerCase(), st=String(s?.style||'').toLowerCase(), name=String(s?.name||'').toLowerCase();
+    const key=id+' '+st+' '+name;
+    if(/mako|shark/.test(key))return 'shark';
+    if(/clownfish|anemonefish/.test(key))return 'clown';
+    if(/parrotfish/.test(key))return 'parrot';
+    if(/manta/.test(key))return 'ray';
+    if(/ray|skate/.test(key))return 'ray';
+    if(/halibut|flounder|plaice|flatfish/.test(key))return 'flat';
+    if(/sailfish|swordfish|billfish/.test(key))return 'billfish';
+    if(/sunfish/.test(key))return 'sunfish';
+    if(/tuna/.test(key))return 'tuna';
+    if(/icefish/.test(key))return 'icefish';
+    if(/herring|sardine|capelin/.test(key))return 'school';
+    if(/cod|wolffish|toothfish|rockcod/.test(key))return 'cod';
+    if(/moorish|idol/.test(key))return 'moorish';
+    if(/trigger/.test(key))return 'trigger';
+    if(/angel/.test(key))return 'angel';
+    if(/surgeon|tang/.test(key))return 'surgeon';
+    if(/butterfly/.test(key))return 'butterfly';
+    if(/sweetlips/.test(key))return 'sweetlips';
+    if(/grouper|trout/.test(key))return 'grouper';
+    if(/wrasse/.test(key))return 'wrasse';
+    if(/reef/.test(key))return 'reef';
+    return 'general';
+  };
+
+  function paintGeneric(g, s){
+    const fam=familyFor(s), w=g.canvas.width/2, h=g.canvas.height/2;
+    const scale=Math.min(w/62,h/31), L=46*scale, H=13*scale;
+    const c=s.color||'#5fa1b6';
+    const dark='#162b35', pale='#e4f4f4';
+    const body=(rx,ry,fill)=>{g.fillStyle=fill;g.beginPath();g.ellipse(0,0,rx,ry,0,0,Math.PI*2);g.fill();};
+    const tail=(len=16,ht=12,fill=dark)=>{g.fillStyle=fill;g.beginPath();g.moveTo(-L*.76,0);g.lineTo(-L*.76-len,-ht);g.lineTo(-L*.92-len*.1,0);g.lineTo(-L*.76-len,ht);g.closePath();g.fill();};
+    const eye=(x=L*.68,y=-H*.25,r=Math.max(1.7,H*.11))=>{g.fillStyle=pale;g.beginPath();g.arc(x,y,r,0,Math.PI*2);g.fill();g.fillStyle='#102028';g.beginPath();g.arc(x+.35,y-.15,r*.42,0,Math.PI*2);g.fill();};
+    const fin=(x,y,pts,fill=dark)=>{g.fillStyle=fill;g.beginPath();g.moveTo(x,y);pts.forEach(p=>g.lineTo(p[0],p[1]));g.closePath();g.fill();};
+    const stripe=(x,fill,wid=2)=>{g.fillStyle=fill;g.fillRect(x,-H*.92,wid,H*1.84);};
+
+    g.save();
+    g.translate(w,h*.56);
+    g.scale(1,1);
+    switch(fam){
+      case 'shark':{
+        body(40*scale,9*scale,c); tail(17*scale,9*scale,dark);
+        fin(-4*scale,-7*scale,[[4*scale,-17*scale],[11*scale,-7*scale]],dark);
+        fin(-14*scale,7*scale,[[2*scale,14*scale],[8*scale,6*scale]],dark);
+        g.fillStyle='#b8cbd0';g.beginPath();g.moveTo(34*scale,5*scale);g.lineTo(22*scale,2*scale);g.lineTo(34*scale,1*scale);g.closePath();g.fill();
+        eye();break;
+      }
+      case 'ray':{
+        g.fillStyle=c;g.beginPath();g.moveTo(34*scale,0);g.quadraticCurveTo(0,-19*scale,-40*scale,0);g.quadraticCurveTo(0,19*scale,34*scale,0);g.closePath();g.fill();
+        g.strokeStyle=dark;g.lineWidth=1.6*scale;g.beginPath();g.moveTo(25*scale,0);g.quadraticCurveTo(51*scale,8*scale,76*scale,-2*scale);g.stroke();
+        eye(18*scale,-5*scale,2.2*scale);break;
+      }
+      case 'flat':{
+        g.fillStyle=c;g.beginPath();g.ellipse(0,0,44*scale,19*scale,.05,0,Math.PI*2);g.fill();
+        g.fillStyle='rgba(235,225,195,.4)';for(let i=0;i<9;i++){g.beginPath();g.arc(-22*scale+i*5*scale,(-1+(i%2)*3)*scale,1.6*scale,0,Math.PI*2);g.fill();}
+        tail(13*scale,7*scale,'#615b4c');eye(23*scale,-4*scale,2.3*scale);break;
+      }
+      case 'billfish':{
+        body(43*scale,7.5*scale,c);tail(14*scale,8*scale,dark);
+        g.fillStyle='#193b59';g.beginPath();g.moveTo(0,-7*scale);g.lineTo(7*scale,-25*scale);g.lineTo(17*scale,-7*scale);g.closePath();g.fill();
+        g.strokeStyle='#b9c7cc';g.lineWidth=2*scale;g.beginPath();g.moveTo(42*scale,-1*scale);g.lineTo(64*scale,-2*scale);g.stroke();eye(30*scale,-3*scale,2.1*scale);break;
+      }
+      case 'sunfish':{
+        body(34*scale,26*scale,c);fin(-8*scale,-23*scale,[[-26*scale,-35*scale],[-29*scale,-14*scale]],dark);fin(-8*scale,23*scale,[[-26*scale,35*scale],[-29*scale,14*scale]],dark);
+        eye(23*scale,-3*scale,2.4*scale);break;
+      }
+      case 'tuna':{
+        body(42*scale,10*scale,c);tail(18*scale,10*scale,dark);fin(-6*scale,-8*scale,[[2*scale,-15*scale],[9*scale,-8*scale]],dark);fin(-1*scale,8*scale,[[7*scale,13*scale],[13*scale,7*scale]],dark);eye();break;
+      }
+      case 'icefish':{
+        body(41*scale,8*scale,'#b7ced6');tail(14*scale,8*scale,'#6b8089');fin(2*scale,-7*scale,[[8*scale,-18*scale],[16*scale,-7*scale]],'#8ca8b4');eye();break;
+      }
+      case 'school':{
+        body(32*scale,7*scale,c);tail(13*scale,8*scale,'#5f7785');
+        for(let i=0;i<6;i++)stripe((-5+i*7)*scale,'rgba(40,65,80,.34)',1.3*scale);eye();break;
+      }
+      case 'cod':{
+        body(38*scale,12*scale,c);tail(15*scale,9*scale,'#4e5960');
+        fin(-8*scale,-10*scale,[[0,-17*scale],[8*scale,-9*scale]],'#4e5960');
+        fin(4*scale,9*scale,[[10*scale,15*scale],[15*scale,8*scale]],'#4e5960');
+        g.fillStyle='#b9c2bf';g.beginPath();g.moveTo(40*scale,2*scale);g.quadraticCurveTo(46*scale,6*scale,41*scale,8*scale);g.lineTo(34*scale,4*scale);g.closePath();g.fill();eye();break;
+      }
+      case 'clown':{
+        body(31*scale,12*scale,c||'#ef8b2f');tail(14*scale,10*scale,'#223944');
+        stripe(-11*scale,'#f7f6ef',3.8*scale);stripe(4*scale,'#f7f6ef',3.8*scale);
+        g.fillStyle='rgba(25,25,25,.7)';g.fillRect(-13*scale,-13*scale,6*scale,26*scale);g.fillRect(2*scale,-13*scale,6*scale,26*scale);
+        fin(-2*scale,-11*scale,[[5*scale,-20*scale],[11*scale,-10*scale]],'#c85f27');eye();break;
+      }
+      case 'parrot':{
+        body(35*scale,15*scale,c||'#4ec7a1');tail(15*scale,11*scale,'#2d5360');
+        fin(-4*scale,-12*scale,[[1*scale,-21*scale],[8*scale,-12*scale]],'#41a97e');
+        g.fillStyle='#f2c64a';g.beginPath();g.arc(33*scale,4*scale,4.5*scale,0,Math.PI*2);g.fill();
+        g.fillStyle='#2b6d61';g.beginPath();g.moveTo(29*scale,1*scale);g.quadraticCurveTo(40*scale,0,42*scale,4*scale);g.quadraticCurveTo(36*scale,9*scale,29*scale,6*scale);g.closePath();g.fill();
+        eye(27*scale,-4*scale,2.2*scale);break;
+      }
+      case 'moorish':
+      case 'angel':
+      case 'surgeon':
+      case 'butterfly':
+      case 'sweetlips':
+      case 'trigger':
+      case 'grouper':
+      case 'wrasse':
+      case 'reef':{
+        body(33*scale,14*scale,c);tail(15*scale,11*scale,typeof s.color==='string'?s.color:dark);
+        if(fam==='moorish'){
+          stripe(-12*scale,'#151515',4*scale);stripe(9*scale,'#151515',4*scale);g.fillStyle='#f1d03f';g.fillRect(-20*scale,-13*scale,5*scale,26*scale);
+          fin(-2*scale,-13*scale,[[-1*scale,-32*scale],[5*scale,-13*scale]],'#f1f0e8');
+        }else if(fam==='angel'||fam==='butterfly'){
+          for(let i=0;i<5;i++){g.fillStyle=i%2?'#193d83':'rgba(255,255,255,.55)';g.fillRect((-4+i*7)*scale,-13*scale,2*scale,26*scale);}
+          fin(-2*scale,-12*scale,[[7*scale,-25*scale],[14*scale,-11*scale]],c);
+        }else if(fam==='surgeon'){
+          g.fillStyle='#f2d22b';g.fillRect(-7*scale,-14*scale,4*scale,28*scale);g.fillStyle='#f2f0e8';g.fillRect(9*scale,-12*scale,10*scale,24*scale);
+        }else if(fam==='trigger'){
+          g.fillStyle='rgba(30,30,20,.35)';for(let i=0;i<4;i++)g.fillRect((-12+i*7)*scale,-13*scale,2*scale,26*scale);
+          fin(-1*scale,-13*scale,[[-1*scale,-26*scale],[6*scale,-13*scale]],'#33402b');
+        }else if(fam==='sweetlips'){
+          for(let i=0;i<5;i++){g.fillStyle='rgba(30,30,30,.28)';g.fillRect((-13+i*7)*scale,-13*scale,2*scale,26*scale);}
+        }
+        eye();break;
+      }
+      default:{
+        body(38*scale,11*scale,c);tail(15*scale,10*scale,dark);fin(-5*scale,-8*scale,[[2*scale,-17*scale],[9*scale,-8*scale]],dark);fin(0,8*scale,[[8*scale,15*scale],[13*scale,7*scale]],dark);eye();break;
+      }
+    }
+    g.restore();
+  }
+
+  function renderExistingArt(s,canvas){
+    const pair=(typeof A!=='undefined'&&A[s.id])?A[s.id]:
+      (typeof A!=='undefined'&&A[ART_ALIAS[s.id]])?A[ART_ALIAS[s.id]]:null;
+    const g=canvas.getContext('2d');
+    g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,canvas.width,canvas.height);
+    if(!pair){paintGeneric(g,s);return;}
+
+    const oldCx= cx, oldSD=SD;
+    try{
+      cx=g;SD=7;
+      const fn=pair[0],r=pair[1];
+      const sc=Math.min(34/r.L,15/r.h);
+      g.save();g.translate(canvas.width/2,canvas.height/2+1);g.scale(sc,sc);fn(r);g.restore();
+    }catch(e){
+      try{cx=oldCx;SD=oldSD;}catch(_e){}
+      paintGeneric(g,s);
+      return;
+    }
+    cx=oldCx;SD=oldSD;
+  }
+
+  function decorate(){
+    const grid=$('speciesGrid');if(!grid)return;
+    grid.querySelectorAll('.card').forEach(card=>{
+      if(card.classList.contains('locked'))return;
+      const h3=card.querySelector('h3');if(!h3)return;
+      const name=h3.textContent.trim();
+      const s=list().find(x=>x.name===name);if(!s||!isFish(s))return;
+      const host=card.querySelector('.emoji');if(!host||host.dataset.oeFishArt==='1')return;
+      host.dataset.oeFishArt='1';host.classList.add('oeFishThumbHost');host.textContent='';
+      const wrap=document.createElement('span');wrap.className='oeFishThumb';
+      const canvas=document.createElement('canvas');canvas.className='oeFishThumbCanvas';canvas.width=152;canvas.height=72;canvas.setAttribute('aria-label',esc(s.name)+' illustration');
+      wrap.appendChild(canvas);host.appendChild(wrap);
+      renderExistingArt(s,canvas);
+    });
+  }
+
+  /* Decorate after the existing V5 collection has rendered. */
+  try{
+    const original=openBookV5;
+    openBookV5=function(){
+      const out=original.apply(this,arguments);
+      setTimeout(decorate,0);
+      return out;
+    };
+  }catch(e){}
+
+  const grid=$('speciesGrid');
+  if(grid){
+    const mo=new MutationObserver(()=>setTimeout(decorate,0));
+    mo.observe(grid,{childList:true,subtree:true});
+  }
+
+  /* Existing search field only filters/rebuilds cards; artwork follows the same cards. */
+  const search=$('encySearch');
+  if(search)search.addEventListener('input',()=>setTimeout(decorate,0),true);
+
+  window.__OCEAN_V52={version:'52.0.0',collectionFishArt:'same-engine-vector',externalImagesEmbedded:false};
+  window.__OCEAN_V52_READY=true;
+})();
+</script>
