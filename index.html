@@ -7551,3 +7551,241 @@ body.oeSpeciesProfileOpen #v31RegionBioPanel.on{
   window.__OCEAN_V52_READY=true;
 })();
 </script>
+
+
+<script id="ocean-v53-external-ocean-audio">
+/* OCEAN EXPLORER — V53 EXTERNAL OCEAN AUDIO LAYER
+   Rules:
+   - Append-only: do not alter earlier UI, renderer, controls or gameplay logic.
+   - Adds lightweight real audio assets only; no new DOM/UI.
+   - Uses CC0 assets selected for underwater/ocean context.
+   - Loads lazily after user interaction so initial page cost stays low.
+*/
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V53_AUDIO_READY)return;
+
+  const ASSETS={
+    // CC0 / OpenGameArt — 705.2 KB OGG, seamless underwater ambient pad.
+    bgm:'https://opengameart.org/sites/default/files/Underwater-Ambient-Pad-isaiah658_0.ogg',
+    // CC0 / OpenGameArt — tiny fish/water SFX.
+    bubbles:'https://lpc.opengameart.org/sites/default/files/bubbles_0.mp3',
+    water:'https://lpc.opengameart.org/sites/default/files/water.mp3',
+    swim:'https://lpc.opengameart.org/sites/default/files/swim.mp3',
+    eating:'https://lpc.opengameart.org/sites/default/files/eating.mp3',
+    reentry:'https://lpc.opengameart.org/sites/default/files/waterReentry.mp3'
+  };
+
+  const ext={bgm:null,clips:{},loaded:false,playing:false,failed:false,lastSwim:0,lastBubble:0};
+  const make=(url,loop=false,volume=.1)=>{
+    const a=new Audio();
+    a.preload='none';a.src=url;a.loop=loop;a.volume=volume;
+    return a;
+  };
+
+  function enabled(){return window.state?.audioEnabled!==false;}
+  function ensureAssets(){
+    if(ext.loaded)return true;
+    ext.bgm=make(ASSETS.bgm,true,.085);
+    ext.clips.bubbles=make(ASSETS.bubbles,false,.075);
+    ext.clips.water=make(ASSETS.water,false,.06);
+    ext.clips.swim=make(ASSETS.swim,false,.075);
+    ext.clips.eating=make(ASSETS.eating,false,.085);
+    ext.clips.reentry=make(ASSETS.reentry,false,.07);
+    ext.loaded=true;
+    ext.bgm.addEventListener('error',()=>{
+      ext.failed=true;ext.playing=false;
+      try{
+        if(window.AudioEngine?.music?.gain&&window.AudioEngine?.ctx){
+          window.AudioEngine.music.gain.setTargetAtTime(.20,window.AudioEngine.ctx.currentTime,.12);
+        }
+      }catch(e){}
+    },{once:true});
+    return true;
+  }
+
+  function reduceProceduralBed(){
+    try{
+      const ae=window.AudioEngine;if(!ae?.ctx)return;
+      if(ae.music?.gain)ae.music.gain.setTargetAtTime(.012,ae.ctx.currentTime,.18);
+      if(ae.ambient?.gain)ae.ambient.gain.setTargetAtTime(.055,ae.ctx.currentTime,.18);
+    }catch(e){}
+  }
+
+  async function start(){
+    if(!enabled())return false;
+    ensureAssets();
+    try{
+      if(window.AudioEngine?.resume)window.AudioEngine.resume();
+      reduceProceduralBed();
+      if(!ext.bgm||ext.failed)return false;
+      ext.bgm.volume=.085;
+      await ext.bgm.play();
+      ext.playing=true;
+      return true;
+    }catch(e){
+      ext.playing=false;
+      return false;
+    }
+  }
+
+  function pause(){
+    try{ext.bgm?.pause();}catch(e){}
+    ext.playing=false;
+  }
+
+  function sync(){
+    if(!enabled()){pause();return;}
+    if(!ext.loaded)return;
+    if(!ext.playing)start();
+  }
+
+  function play(name,vol){
+    if(!enabled())return;
+    ensureAssets();
+    const a=ext.clips[name];if(!a)return;
+    try{
+      a.currentTime=0;
+      a.volume=Number.isFinite(vol)?vol:a.volume;
+      const p=a.play();if(p?.catch)p.catch(()=>{});
+    }catch(e){}
+  }
+
+  // First real user gesture: start the real underwater bed without adding UI.
+  const bootAudio=()=>{start();};
+  addEventListener('pointerdown',bootAudio,{once:true,capture:true});
+  addEventListener('keydown',bootAudio,{once:true,capture:true});
+  document.getElementById('v17Begin')?.addEventListener('click',bootAudio,true);
+  document.getElementById('v17Skip')?.addEventListener('click',bootAudio,true);
+  document.getElementById('v17Atlas')?.addEventListener('click',bootAudio,true);
+
+  // Keep external audio synchronized with the existing Audio toggle.
+  if(window.AudioEngine&&!window.AudioEngine.__v53ToggleWrapped){
+    const baseToggle=window.AudioEngine.toggle.bind(window.AudioEngine);
+    window.AudioEngine.toggle=function(){
+      const out=baseToggle();
+      setTimeout(()=>{
+        if(window.state?.audioEnabled===false)pause(); else start();
+      },0);
+      return out;
+    };
+    window.AudioEngine.__v53ToggleWrapped=true;
+  }
+
+  // Natural-feeling ambient bubbles while the player is swimming/idle.
+  setInterval(()=>{
+    if(!enabled()||document.hidden)return;
+    const now=performance.now();
+    if(now-ext.lastBubble<11000)return;
+    if(!ext.playing)return;
+    ext.lastBubble=now;
+    play('bubbles',.05+.02*Math.random());
+  },3500);
+
+  // Short fish/water movement cue: intentionally sparse and quiet.
+  setInterval(()=>{
+    if(!enabled()||document.hidden||!ext.playing)return;
+    const p=window.player;if(!p)return;
+    const speed=Math.hypot(Number(p.vx)||0,Number(p.vy)||0);
+    const now=performance.now();
+    if(speed>0.55&&now-ext.lastSwim>8500){
+      ext.lastSwim=now;play('swim',.055);
+    }
+  },2400);
+
+  // Existing action hooks: supplement, never replace, the game's procedural cues.
+  document.getElementById('observeBtn')?.addEventListener('click',()=>play('bubbles',.07),true);
+  document.getElementById('scanBtn')?.addEventListener('click',()=>play('water',.055),true);
+  document.getElementById('photoBtn')?.addEventListener('click',()=>play('water',.045),true);
+
+  // Research / feeding interaction: reuse the game's existing interaction function.
+  if(typeof window.markEcologicalInteraction==='function'&&!window.markEcologicalInteraction.__v53Audio){
+    const baseInteraction=window.markEcologicalInteraction;
+    window.markEcologicalInteraction=function(c){
+      const before=window.interactionLog?.size||0;
+      const out=baseInteraction(c);
+      const after=window.interactionLog?.size||0;
+      if(after>before)play('eating',.07);
+      return out;
+    };
+    window.markEcologicalInteraction.__v53Audio=true;
+  }
+
+  // Keep a gentle entry cue when the expedition begins.
+  document.getElementById('v17Begin')?.addEventListener('click',()=>setTimeout(()=>play('reentry',.055),120),true);
+
+  window.__OCEAN_V53_AUDIO={
+    assets:ASSETS,
+    start,pause,sync,play,
+    state:()=>({loaded:ext.loaded,playing:ext.playing,failed:ext.failed})
+  };
+  window.__OCEAN_V53_AUDIO_READY=true;
+})();
+</script>
+
+<script id="ocean-v54-audio-level-tuning">
+/* OCEAN EXPLORER — V54 AUDIO LEVEL TUNING
+   Rules:
+   - Append-only: do not alter earlier UI, renderer, controls or gameplay logic.
+   - Increase only the existing V53 external audio playback levels.
+   - No new DOM/UI; preserve the existing audio toggle and fallback system.
+*/
+(()=>{
+  'use strict';
+  if(window.__OCEAN_V54_AUDIO_READY)return;
+
+  const LEVELS={
+    bgm:.14,
+    bubbles:.11,
+    water:.10,
+    swim:.11,
+    eating:.12,
+    reentry:.10
+  };
+
+  // V53 creates Audio() objects without attaching them to the DOM.
+  // Intercept only media playback so the existing V53 objects keep working,
+  // while the requested louder levels are applied centrally.
+  const mediaProto=window.HTMLMediaElement?.prototype;
+  if(mediaProto?.play&&!mediaProto.play.__v54Wrapped){
+    const basePlay=mediaProto.play;
+    const wrapped=function(){
+      try{
+        const src=String(this.currentSrc||this.src||'');
+        if(src.includes('Underwater-Ambient-Pad-isaiah658_0.ogg')) this.volume=LEVELS.bgm;
+        else if(src.includes('/bubbles_0.mp3')) this.volume=LEVELS.bubbles;
+        else if(src.includes('/water.mp3')) this.volume=LEVELS.water;
+        else if(src.includes('/swim.mp3')) this.volume=LEVELS.swim;
+        else if(src.includes('/eating.mp3')) this.volume=LEVELS.eating;
+        else if(src.includes('/waterReentry.mp3')) this.volume=LEVELS.reentry;
+      }catch(e){}
+      return basePlay.apply(this,arguments);
+    };
+    wrapped.__v54Wrapped=true;
+    mediaProto.play=wrapped;
+  }
+
+  // V53 action hooks call this method with a per-event volume. Keep those
+  // hooks intact, but raise the actual level to the tuned mix above.
+  if(window.__OCEAN_V53_AUDIO?.play&&!window.__OCEAN_V53_AUDIO.play.__v54Wrapped){
+    const basePlay=window.__OCEAN_V53_AUDIO.play;
+    const wrapped=(name,vol)=>basePlay(name,LEVELS[name]??(Number.isFinite(vol)?vol:.1));
+    wrapped.__v54Wrapped=true;
+    window.__OCEAN_V53_AUDIO.play=wrapped;
+  }
+
+  // Restart the existing bed once, after the playback wrapper is installed,
+  // so an already-started V53 BGM immediately picks up the louder mix.
+  const refresh=async()=>{
+    try{
+      if(window.state?.audioEnabled===false)return;
+      if(window.__OCEAN_V53_AUDIO?.pause)window.__OCEAN_V53_AUDIO.pause();
+      if(window.__OCEAN_V53_AUDIO?.start)await window.__OCEAN_V53_AUDIO.start();
+    }catch(e){}
+  };
+  setTimeout(refresh,80);
+
+  window.__OCEAN_V54_AUDIO={levels:LEVELS,refresh};
+  window.__OCEAN_V54_AUDIO_READY=true;
+})();
+</script>
