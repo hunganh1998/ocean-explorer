@@ -1,15 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" data-build="Ocean Explorer V40 FINAL">
 <head>
-  <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CMKDVZX45K"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-CMKDVZX45K');
-</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ocean Explorer — ScienceFirst Expedition · V40 Living Ocean Core · ScienceFirst</title>
@@ -555,7 +546,7 @@ function updateCreatures(dt){
     const dPlayer=Math.hypot(c.x-player.x,c.y-player.y);
     if(dPlayer<75 && (c.motion==='fish'||c.motion==='jelly')){const dx=c.x-player.x,dy=c.y-player.y,d=Math.hypot(dx,dy)||1;tx+=dx/d*45;ty+=dy/d*22;}
     const dx=tx-c.x,dy=ty-c.y,dist=Math.hypot(dx,dy)||1;
-    const step=Math.min(dist,(c.speed||.4)*55*dt);c.x+=dx/dist*step;c.y+=dy/dist*step;
+    const step=Math.min(dist,(c.cruise||(c.speed||.4)*55)*dt);c.x+=dx/dist*step;c.y+=dy/dist*step;
     c.vx=(c.vx||0)*.86+(dx/dist)*step/.016*.14;c.vy=(c.vy||0)*.86+(dy/dist)*step/.016*.14;
     if(Math.abs(dx)>1)c.dir=dx>0?1:-1;
     if(c.school){let sx=0,sy=0,n=0;for(const o of creatures){if(o===c||o.school!==c.school)continue;const dd=Math.hypot(o.x-c.x,o.y-c.y);if(dd<170){sx+=o.x;sy+=o.y;n++;}}if(n){c.x+=(sx/n-c.x)*.008;c.y+=(sy/n-c.y)*.006;}}
@@ -2719,7 +2710,7 @@ setupMissionCompact();
     // ---------- WORLD DATA CORRECTIONS ----------
     try{
       if(world.world?.atlantic) world.world.atlantic.regions=(world.world.atlantic.regions||[]).filter(x=>x!=='california_current');
-      if(world.world?.pacific && !world.world.pacific.regions.includes('california_current')) world.world.pacific.regions.push('california_current');
+      if(world.world?.pacific && !(world.world.pacific.regions||[]).includes('california_current')) world.world.pacific.regions.push('california_current');
       if(world.regions?.california_current) world.regions.california_current.ocean='pacific';
       world.world.indian={id:'indian',name:'Indian Ocean',short:'INDIAN',accent:OCEAN_BIOLOGY.indian.accent,regions:['maldives_reef'],note:'Tropical and subtropical basin with distinctive monsoon-driven circulation in the north and complex seasonal variability.'};
       world.regions.maldives_reef={
@@ -3976,57 +3967,69 @@ window.__OCEAN_V24_READY=true;
   // does not depend on any previous player renderer, so a broken legacy layer cannot
   // make the protagonist disappear.
   let playerFrames=0;
+  let dvPh=0,dvLast=null,dvSp=0,dvPitch=0,dvVx=0,dvVy=0;
   function renderDrElias(){
     if(typeof ctx==='undefined'||typeof W==='undefined'||typeof H==='undefined'||typeof player==='undefined')return;
     player.x=finite(player.x,0);player.y=finite(player.y,0);
     player.vx=finite(player.vx,0);player.vy=finite(player.vy,0);
     const q=typeof worldToScreen==='function'?worldToScreen(player.x,player.y):{x:W/2,y:H/2};
     if(!Number.isFinite(q.x)||!Number.isFinite(q.y))return;
-    const vx=player.vx,vy=player.vy,speed=Math.min(1,Math.hypot(vx,vy)/1.25);
-    const dir=player.dir===-1?-1:1;
     const t=typeof time==='number'?time:performance.now()/1000;
-    const swim=t*(4.2+speed*3.2),kick=Math.sin(swim)*speed,arm=Math.sin(swim*.9+1.2)*speed,bob=Math.sin(swim*1.15)*1.5*speed;
-    // The protagonist is the authoritative player renderer: never inherit a leaked
-    // transform from a species renderer.
+    let dt=dvLast==null?0:t-dvLast;dvLast=t;if(!(dt>0&&dt<.2))dt=0;
+    // Smoothed swim state: speed, travel direction and kick phase (slow sculling when idle, flutter kick when moving)
+    const k=1-Math.exp(-dt*6);
+    dvSp+=(Math.min(1,Math.hypot(player.vx,player.vy)/1.25)-dvSp)*k;dvVx+=(player.vx-dvVx)*k;dvVy+=(player.vy-dvVy)*k;
+    const sp=dvSp,w=Math.min(1,sp*1.7);
+    dvPh+=dt*(2.3+sp*7.4);const ph=dvPh;
+    const dir=player.dir===-1?-1:1;
+    // Body is prone and pitches toward the direction of travel; hovers slightly head-up when idle
+    const tp=sp>.08?Math.max(-.85,Math.min(.85,Math.atan2(dvVy,Math.abs(dvVx)+.25)*.75)):-.1;
+    dvPitch+=(tp-dvPitch)*(1-Math.exp(-dt*5));
+    const und=Math.sin(ph)*.05*(.35+sp),bob=Math.sin(t*1.6)*(1.7-1.1*sp);
+    const th=dvPitch+und*.5;
     const dpr=Number.isFinite(DPR)?DPR:Math.min(devicePixelRatio||1,2);
     ctx.save();ctx.setTransform(dpr,0,0,dpr,0,0);
-    ctx.translate(q.x,q.y+bob);ctx.scale(dir,1);
-    ctx.rotate(Math.max(-.22,Math.min(.22,Math.atan2(vy,Math.abs(vx)+.2)*.18)));
-
-    // Shadow / wake
-    ctx.globalAlpha=.22;ctx.fillStyle='#00141d';ctx.beginPath();ctx.ellipse(0,39,30,8,0,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
-    // Oxygen tank
-    ctx.fillStyle='#2f6873';ctx.beginPath();ctx.roundRect(-25,-20,8,32,4);ctx.fill();
-    ctx.fillStyle='#d9f4f1';ctx.fillRect(-24,-25,6,7);
-    // Legs + fins
-    ctx.strokeStyle='#16353f';ctx.lineWidth=7;ctx.lineCap='round';
-    ctx.beginPath();ctx.moveTo(-7,14);ctx.lineTo(-13,29-kick*5);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(7,14);ctx.lineTo(13,29+kick*5);ctx.stroke();
-    ctx.fillStyle='#15343d';
-    ctx.beginPath();ctx.moveTo(-12,28-kick*5);ctx.lineTo(-37,36-kick*7);ctx.lineTo(-16,39-kick*4);ctx.closePath();ctx.fill();
-    ctx.beginPath();ctx.moveTo(12,28+kick*5);ctx.lineTo(37,36+kick*7);ctx.lineTo(16,39+kick*4);ctx.closePath();ctx.fill();
-    // Suit torso
-    const suit=ctx.createLinearGradient(-20,-25,20,25);suit.addColorStop(0,'#f4fbf8');suit.addColorStop(.55,'#c8e1de');suit.addColorStop(1,'#6b969d');
-    ctx.fillStyle=suit;ctx.beginPath();ctx.roundRect(-15,-25,30,46,8);ctx.fill();
-    ctx.strokeStyle='rgba(25,68,78,.9)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-13,-12);ctx.lineTo(13,10);ctx.moveTo(13,-12);ctx.lineTo(-13,10);ctx.stroke();
-    // Arms, gently animated
-    ctx.strokeStyle='#b9dad7';ctx.lineWidth=6;
-    ctx.beginPath();ctx.moveTo(-13,-12);ctx.quadraticCurveTo(-24,-5-arm*6,-24,12+arm*3);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(13,-12);ctx.quadraticCurveTo(24,-5-arm*6,24,12-arm*3);ctx.stroke();
-    // Head / hair / face
-    ctx.fillStyle='#d9eae7';ctx.beginPath();ctx.arc(0,-36,18,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#d8aa82';ctx.beginPath();ctx.arc(1,-39,9.5,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#3a2b26';ctx.beginPath();ctx.arc(0,-44,10,Math.PI,Math.PI*2);ctx.fill();ctx.fillRect(-9,-44,18,5);
-    ctx.fillStyle='#263239';ctx.beginPath();ctx.arc(-3,-40,1.1,0,Math.PI*2);ctx.arc(5,-40,1.1,0,Math.PI*2);ctx.fill();
-    // Helmet / visor
-    ctx.strokeStyle='rgba(107,227,240,.95)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,-36,16,0,Math.PI*2);ctx.stroke();
-    ctx.fillStyle='rgba(116,235,244,.12)';ctx.beginPath();ctx.arc(1,-38,14,0,Math.PI*2);ctx.fill();
-    // Research tablet
-    ctx.fillStyle='#1b4e5a';ctx.beginPath();ctx.roundRect(10,3,11,8,2);ctx.fill();
-    // Bubbles
-    ctx.strokeStyle='rgba(221,252,255,.7)';ctx.lineWidth=1;
-    for(let i=0;i<3;i++){const bx=8+i*7+Math.sin(swim*.45+i)*2,by=-49-i*10-((t*10+i*7)%13);ctx.beginPath();ctx.arc(bx,by,1.7-.2*i,0,Math.PI*2);ctx.stroke();}
-    ctx.fillStyle='#eaffff';ctx.font='800 9px system-ui';ctx.textAlign='center';ctx.globalAlpha=.9;ctx.fillText('DR. ELIAS',0,-61);
+    ctx.translate(q.x,q.y+bob);ctx.scale(dir*.92,.92);ctx.rotate(th);
+    const V=a=>[Math.cos(a),Math.sin(a)],kickA=.26+.36*sp;
+    // Leg chain: thigh -> shin (lagging knee flex) -> fin blade, all driven by the same flutter-kick phase
+    const leg=(off,col,fin)=>{
+      const hx=-15,hy=2,k1=.08+kickA*Math.sin(ph+off),k2=k1+kickA*.9*Math.sin(ph+off-1.1),k3=k2+kickA*.55*Math.sin(ph+off-1.9);
+      const a1=V(Math.PI-k1),kx=hx+a1[0]*15,ky=hy+a1[1]*15,a2=V(Math.PI-k2),ax=kx+a2[0]*15,ay=ky+a2[1]*15;
+      ctx.strokeStyle=col;ctx.lineWidth=6.4;ctx.lineCap='round';ctx.lineJoin='round';
+      ctx.beginPath();ctx.moveTo(hx,hy);ctx.lineTo(kx,ky);ctx.lineTo(ax,ay);ctx.stroke();
+      const f1=V(Math.PI-k3-.3),f2=V(Math.PI-k3+.3);ctx.fillStyle=fin;
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax+f1[0]*21,ay+f1[1]*21);ctx.quadraticCurveTo(ax+V(Math.PI-k3)[0]*25,ay+V(Math.PI-k3)[1]*25,ax+f2[0]*21,ay+f2[1]*21);ctx.closePath();ctx.fill();
+    };
+    // Arms: forward and sculling when idle, swept back along the body when swimming
+    const arm=(off,col,tab)=>{
+      const sx=12,sy=3,a1=(.85+.22*Math.sin(ph*.8+off))*(1-w)+(Math.PI-.3+.1*Math.sin(ph*.5+off))*w,a2=a1+(-.65*(1-w)+.12*w);
+      const u=V(a1),ex=sx+u[0]*10.5,ey=sy+u[1]*10.5,f=V(a2),hx=ex+f[0]*10,hy=ey+f[1]*10;
+      ctx.strokeStyle=col;ctx.lineWidth=5.2;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(ex,ey);ctx.lineTo(hx,hy);ctx.stroke();
+      ctx.fillStyle='#16353f';ctx.beginPath();ctx.arc(hx,hy,2.8,0,Math.PI*2);ctx.fill();
+      if(tab&&w<.6){ctx.save();ctx.translate(hx+3,hy-2);ctx.rotate(a2-.4);ctx.globalAlpha=1-w*1.6;ctx.fillStyle='#1b4e5a';ctx.beginPath();ctx.roundRect(-1,-5,11,8,2);ctx.fill();ctx.fillStyle='rgba(105,236,244,.55)';ctx.fillRect(1,-3,7,4);ctx.restore()}
+    };
+    // far limbs first (dimmer), then tank + torso, then near limbs, head last
+    arm(Math.PI,'#7ea8ab',false);leg(Math.PI,'#0f2a33','#12303a');
+    ctx.fillStyle='#2f6873';ctx.beginPath();ctx.roundRect(-12,-17,27,9,4.5);ctx.fill();
+    ctx.fillStyle='#d9f4f1';ctx.fillRect(14,-15.5,4,5);ctx.fillStyle='rgba(255,255,255,.22)';ctx.fillRect(-8,-15.5,18,2);
+    const suit=ctx.createLinearGradient(0,-8,0,8);suit.addColorStop(0,'#eef9f6');suit.addColorStop(.55,'#c8e1de');suit.addColorStop(1,'#6b969d');
+    ctx.fillStyle=suit;ctx.beginPath();ctx.roundRect(-18,-8,38,16,8);ctx.fill();
+    ctx.strokeStyle='rgba(25,68,78,.85)';ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(-6,-7.5);ctx.lineTo(-6,7.5);ctx.moveTo(8,-7.5);ctx.lineTo(8,7.5);ctx.stroke();
+    leg(0,'#16353f','#1b4552');arm(0,'#b9dad7',true);
+    // Head: hood, face, hair, mask with strap, regulator hose
+    ctx.fillStyle='#d9eae7';ctx.beginPath();ctx.arc(27,-1.5,9,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#d8aa82';ctx.beginPath();ctx.ellipse(31,0,5,5.5,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#3a2b26';ctx.beginPath();ctx.arc(26,-3,8.6,Math.PI*.95,Math.PI*1.95);ctx.fill();
+    ctx.strokeStyle='#16353f';ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(19,-3);ctx.lineTo(30,-2.5);ctx.stroke();
+    ctx.fillStyle='rgba(116,235,244,.38)';ctx.strokeStyle='#1b4e5a';ctx.lineWidth=1.6;ctx.beginPath();ctx.roundRect(29,-5.5,9,7,3);ctx.fill();ctx.stroke();
+    ctx.strokeStyle='#243b44';ctx.lineWidth=1.7;ctx.beginPath();ctx.moveTo(36,4);ctx.bezierCurveTo(26,14,12,-2,14,-14);ctx.stroke();
+    ctx.restore();
+    // Exhaled bubbles rise straight up in screen space from the regulator
+    const hxL=36,hyL=4,c0=Math.cos(th),s0=Math.sin(th),hx=(hxL*c0-hyL*s0)*.92*dir,hy=(hxL*s0+hyL*c0)*.92;
+    ctx.save();ctx.setTransform(dpr,0,0,dpr,0,0);
+    for(let i=0;i<5;i++){const age=((t*.85+i*.24)%1.2)/1.2,bx=q.x+hx+Math.sin(t*3+i*1.9)*3*age,by=q.y+bob+hy-age*40;
+      ctx.globalAlpha=.7*(1-age);ctx.strokeStyle='rgba(221,252,255,.9)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(bx,by,1+age*2.2,0,Math.PI*2);ctx.stroke()}
+    ctx.globalAlpha=.9;ctx.fillStyle='#eaffff';ctx.font='800 9px system-ui';ctx.textAlign='center';ctx.fillText('DR. ELIAS',q.x,q.y+bob-40);
     ctx.restore();
     playerFrames++;
   }
@@ -5253,7 +5256,7 @@ const P=window.drawPlayer;window.drawPlayer=function(){P&&P();overlay()};
 
 /* ===== V42: fixes + biological depth layers + contact card ===== */
 (window.__OCEAN_V23?.species||[]).forEach(s=>{if(!species.some(x=>x.id===s.id))species.push(s)}); // fix: *_v23 species were missing from the species array
-const DM=120,Y0=-260,YS=680/DM,fy=d=>Y0+d*YS,dy=y=>Math.max(0,(y-Y0)/YS),fD=x=>10+110*Math.min(1,Math.max(0,(x+650)/1300)),fX=d=>(d-10)/110*1300-650;
+const DM=120,Y0=-260,YS=680/DM,fy=d=>Y0+d*YS,dy=y=>Math.max(0,(y-Y0)/YS),fD=x=>DM-3-1.8*Math.sin(x*.011)-1.1*Math.sin(x*.027+1.3),fX=d=>0; /* flat sandy floor at the bottom (gentle dunes) instead of the old diagonal slope */
 const REEF=['coral_triangle','great_barrier','maldives_reef'],LEG=['manta','cleaner','grouper','whaleshark'],reg=()=>window.__OCEAN_V16_WORLD?.state?.regionId||'';
 function rng(s){const t=String(s.depth||''),n=(t.replace(/(\d),(\d)/g,'$1$2').match(/\d+/g)||[]).map(Number);
   if(/^\s*hundreds/.test(t))return[100,DM];
@@ -5263,17 +5266,31 @@ function rng(s){const t=String(s.depth||''),n=(t.replace(/(\d),(\d)/g,'$1$2').ma
   if(/shallow|surface|intertidal|coast|reef|upper/.test(t))return[0,30];
   return[0,DM]}
 const grp={};
+const PIN=['clownfish','cleaner','cleanershrimp','firegoby','anemone','crownstar'];
 function place(c){const s=sp(c.sp);if(!s)return;let[lo,hi]=rng(s);hi=Math.min(hi,DM);lo=Math.min(lo,hi);
-  if(c.motion==='static'){const l=Math.max(10,lo),d=l+Math.max(0,hi-l)*R(),x=fX(d)+(R()-.5)*60;c.x=c.homeX=Math.max(-640,Math.min(640,x));c.y=c.homeY=fy(fD(c.x))-16*c.s;return}
-  const k=c.sp+(c.school||'');let g=grp[k];if(!g||g.r!==reg())g=grp[k]={r:reg(),d:lo+(hi-lo)*Math.pow(R(),1.6),x:c.x};
-  let x=c.x;if(lo>fD(x)-6)x=fX(lo+8);const d=Math.max(lo,1.5,Math.min(g.d+(R()-.5)*3,fD(x)-6));
+  if(c.motion==='static'){const x=-640+R()*1280;c.x=c.homeX=x;c.y=c.homeY=fy(fD(x))-16*c.s;return}
+  const k=c.sp+(c.school||'');let g=grp[k];if(!g||g.r!==reg())g=grp[k]={r:reg(),d:lo+(hi-lo)*Math.pow(R(),1.6),x:c.x,hx:-640+R()*1280};
+  const roam=!PIN.includes(c.sp)&&(c.motion==='fish'||c.motion==='large'||c.motion==='jelly');
+  if(roam){ // wide-roaming swimmers: spread across the whole screen width and use their whole depth band
+    const x=Math.max(-700,Math.min(700,g.hx+(c.school?(R()-.5)*110:0)));
+    const top=Math.max(lo,1.5)+1,bot=Math.max(top+2,Math.min(hi,fD(x)-6)),dC=(top+bot)/2;
+    c.x=c.homeX=x;c.y=c.homeY=fy(dC);
+    c.rangeY=Math.max(8,(bot-top)/2*YS*.5);
+    c.rangeX=c.motion==='large'?300+R()*120:c.motion==='jelly'?120+R()*80:230+R()*100;
+    if(c.motion==='fish')c.cruise=62+R()*38;else if(c.motion==='large')c.cruise=40+R()*30;
+    c.__roam=1;c.__yb=[fy(top),fy(bot)];return}
+  let x=c.x;const d=Math.max(lo,1.5,Math.min(g.d+(R()-.5)*3,fD(x)-6));
   c.x=c.homeX=Math.max(-640,Math.min(640,x));c.y=c.homeY=fy(d);c.rangeY=Math.max(6,Math.min(c.rangeY||40,(d-lo)*YS,(hi-d)*YS,(fD(x)-d)*YS))}
 function fix(){const rg=reg();if(rg!==lastReg){lastReg=rg;closeP()}if(!REEF.includes(reg()))for(let i=creatures.length;i--;)if(LEG.includes(creatures[i].sp))creatures.splice(i,1); // fix: tropical species leaking into polar/temperate regions
   for(const c of creatures)if(!c.v42){c.v42=1;place(c)}}
 const DP=window.drawPlants;
 window.drawCoral=function(){const r=reg(),rf=REEF.includes(r),col=rf?['#d8c391','#8a7550']:/arctic|antarctic/.test(r)?['#b9ccd3','#6c828c']:['#8b8468','#4d4a3c'];
-  ctx.beginPath();ctx.moveTo(0,H+5);for(let x=0;x<=W+20;x+=20){const w=player.x+x-W/2;ctx.lineTo(x,worldToScreen(w,fy(fD(w))).y)}ctx.lineTo(W,H+5);
-  const g=ctx.createLinearGradient(0,H*.3,0,H+5);g.addColorStop(0,col[0]);g.addColorStop(1,col[1]);ctx.fillStyle=g;ctx.fill();
+  const fTop=worldToScreen(0,fy(DM-6)).y;
+  if(fTop<H+40){ctx.beginPath();ctx.moveTo(0,H+5);for(let x=0;x<=W+20;x+=20){const w=player.x+x-W/2;ctx.lineTo(x,worldToScreen(w,fy(fD(w))).y)}ctx.lineTo(W,H+5);
+  const g=ctx.createLinearGradient(0,fTop-4,0,Math.max(H+5,fTop+150));g.addColorStop(0,col[0]);g.addColorStop(1,col[1]);ctx.fillStyle=g;ctx.fill();
+  ctx.save();ctx.globalAlpha=.17;ctx.strokeStyle=col[1];ctx.lineWidth=1.4;
+  for(let k=0;k<5;k++){ctx.beginPath();for(let x=0;x<=W+20;x+=20){const w=player.x+x-W/2,y=worldToScreen(w,fy(fD(w))).y+16+k*17+Math.sin(w*.045+k*1.7)*2.4;x?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.stroke()}
+  ctx.restore()}
   for(let i=0;i<16;i++){const w=-640+i*85,q=worldToScreen(w,fy(fD(w)));if(q.x<-60||q.x>W+60)continue;ctx.fillStyle=rf?['#e27b6c','#c75d79','#e8a64f'][i%3]:'#56606a';ctx.beginPath();ctx.ellipse(q.x,q.y+2,18+i%4*6,10+i%3*5,0,Math.PI,0);ctx.fill()}
   const sy=worldToScreen(0,Y0).y;if(sy>-30){ctx.fillStyle='rgba(215,245,255,.55)';ctx.beginPath();ctx.moveTo(0,0);for(let x=0;x<=W;x+=16)ctx.lineTo(x,sy+Math.sin(x*.03+time*2)*4);ctx.lineTo(W,0);ctx.fill()}};
 window.drawPlants=function(){if(reg()==='california_current'&&DP)return DP();ctx.lineWidth=3;ctx.strokeStyle=REEF.includes(reg())?'#3fae7a':'#4d8f6a';
@@ -5287,7 +5304,7 @@ card.style.cssText='position:fixed;left:50%;bottom:64px;transform:translateX(-50
 const row=(k,v)=>v?`<div><b style="color:#7ed7e8">${k}</b> ${v}</div>`:'';
 let hold=0;const RP=document.getElementById('right');
 if(RP)new MutationObserver(()=>{if(time<hold&&!RP.classList.contains('show'))RP.classList.add('show')}).observe(RP,{attributes:true,attributeFilter:['class']});
-function show(c,s){const z=I[s.latin],[lo,hi]=rng(s),d=Math.round(dy(c.y)),ok=d>=lo&&d<=hi;
+function show(c,s){const z=I[s.latin],[lo,hi]=rng(s),d=Math.round(dy(c.y)),ok=c.motion==='static'||(d>=lo&&d<=hi);
   try{selectCreature(c)}catch(e){}
   if(!RP)return;let n=document.getElementById('v42t');if(!n){n=document.createElement('div');n.id='v42t';RP.prepend(n)}
   n.innerHTML='<button id="v42x" style="float:right;background:rgba(255,255,255,.08);border:1px solid rgba(150,230,255,.35);border-radius:8px;padding:3px 10px;cursor:pointer;color:#e8fbff">✕ Close</button>'+(z?`<span class="tag">IUCN ${z} · ${L[z]}</span> `:'')+`<span class="tag">${ok?'✓ In depth range':'⚠ Outside depth range'} · now at ${d} m</span>`;
@@ -5300,7 +5317,7 @@ function touch(){const n=performance.now(),d=Math.round(dy(player.y));if(tD)tD.d
   for(const c of creatures){const s=sp(c.sp);if(!s||Math.hypot(c.x-player.x,c.y-player.y)>=26+34*c.s||n-(T.get(c)??-1e9)<8000)continue;
     T.set(c,n);show(c,s);fxs.push({x:c.x,y:c.y,t0:time,col:s.color||'#67e8f9'});if(!seen.has(c.sp)){seen.add(c.sp);researchXP+=10}}}
 /* ===== V43: species-specific art (stylised silhouettes; colours follow each species' typical appearance) ===== */
-let cx=ctx;let SD=0;const T6=6.3,sn=(a,b=1)=>Math.sin(time*a+SD)*b;
+let cx=ctx;let SD=0;const T6=6.3,sn=(a,b=1)=>{const T=window.__swTP;return T==null?Math.sin(time*a+SD)*b:Math.sin(T*a+SD)*b*window.__swAMP};
 const ell=(x,y,a,b,rot=0)=>{cx.beginPath();cx.ellipse(x,y,a,b,rot,0,T6);cx.fill()};
 const eye=(x,y,r)=>{cx.fillStyle='#f4f7f2';ell(x,y,r,r);cx.fillStyle='#0b1418';ell(x+r*.2,y,r*.58,r*.58);cx.fillStyle='#fff';ell(x+r*.4,y-r*.3,r*.2,r*.2)};
 const grad=(h,a,b,c)=>{const g=cx.createLinearGradient(0,-h,0,h);g.addColorStop(0,a);g.addColorStop(.5,b||a);g.addColorStop(.78,c||b||a);g.addColorStop(1,c||b||a);return g};
@@ -5589,7 +5606,7 @@ const K='id,name,latin,fam,diet,habitat,depth,size,fact,behavior,adapt,reproduct
 const rows=DATA.trim().split('\n').map(l=>{const v=l.split('|'),o={};K.forEach((k,i)=>o[k]=v[i]);return o});
 
 /* ---------- drawing (same visual language as the existing fish) ---------- */
-let cx=ctx,SD=0;const T=6.3,sn=(a,b=1)=>Math.sin(time*a+SD)*b,
+let cx=ctx,SD=0;const T=6.3,sn=(a,b=1)=>{const T=window.__swTP;return T==null?Math.sin(time*a+SD)*b:Math.sin(T*a+SD)*b*window.__swAMP},
 E=(x,y,a,b,r=0)=>{cx.beginPath();cx.ellipse(x,y,Math.abs(a)||.1,Math.abs(b)||.1,r,0,T);cx.fill()},
 Pg=(...p)=>{cx.beginPath();for(let i=0;i<p.length;i+=2)i?cx.lineTo(p[i],p[i+1]):cx.moveTo(p[i],p[i+1]);cx.closePath();cx.fill()},
 eye=(x,y,r,c='#f4f7f2')=>{cx.fillStyle=c;E(x,y,r,r);cx.fillStyle='#0b1418';E(x+r*.2,y,r*.58,r*.58);cx.fillStyle='#fff';E(x+r*.4,y-r*.3,r*.2,r*.2)},
@@ -6956,6 +6973,69 @@ window.__V45={species:rows.length,art:A};
   };
   window.__OCEAN_V49_READY=true;
   window.__OCEAN_V49_BOOTING=false;
+})();
+</script>
+
+<script id="ocean-v54-swim-roam-patch">
+(()=>{'use strict';
+if(window.__OCEAN_V54_SWIM)return;window.__OCEAN_V54_SWIM=1;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+/* ---- Realistic fish locomotion: per-animal swim phase, smooth turning, body pitch and a bending body ---- */
+const prevDraw=window.drawCreature;
+window.drawCreature=function(c){
+  if(!c||(c.motion!=='fish'&&c.motion!=='large')||typeof prevDraw!=='function')return prevDraw(c);
+  const q=worldToScreen(c.x,c.y);
+  if(q.x<-260||q.x>W+260||q.y<-260||q.y>H+260)return prevDraw(c);
+  let st=c.__sw;if(!st)st=c.__sw={px:c.x,py:c.y,t:time,ph:Math.random()*6.28,vx:0,vy:0,flip:c.dir||1,pitch:0};
+  const dt=time-st.t;
+  if(dt>.0005){
+    const k=1-Math.exp(-dt*5),vx=dt<.25?(c.x-st.px)/dt:0,vy=dt<.25?(c.y-st.py)/dt:0;
+    st.vx+=(vx-st.vx)*k;st.vy+=(vy-st.vy)*k;st.px=c.x;st.py=c.y;st.t=time;
+    const ref=c.cruise||45,sp0=clamp(Math.hypot(st.vx,st.vy)/ref,0,1.2);
+    st.sp=sp0;st.ph+=dt*(.6+sp0*1.8);
+    const tgt=(c.dir||1)>=0?1:-1;st.flip+=(tgt-st.flip)*(1-Math.exp(-dt*7));
+    const big=c.motion==='large'?.55:1,tp=sp0>.15?clamp(Math.atan2(st.vy,Math.abs(st.vx)+18)*.8,-.42,.42)*big:0;
+    st.pitch+=(tp-st.pitch)*(1-Math.exp(-dt*4));
+  }
+  const sp=st.sp||0,sg=st.flip>=0?1:-1,e=sg*Math.max(.14,Math.abs(st.flip));
+  const bendAmp=(.035+.07*sp)*(c.motion==='large'?.5:1),bend=bendAmp*Math.sin(st.ph*5+(c.seed||0)-.6);
+  const od=c.dir;c.dir=e;window.__swTP=st.ph;window.__swAMP=.6+.9*sp;
+  try{
+    if(c.motion==='large'){
+      ctx.save();ctx.translate(q.x,q.y);ctx.rotate(sg*st.pitch+bend*.5);ctx.translate(-q.x,-q.y);prevDraw(c);ctx.restore();
+    }else{
+      const Lh=62*(c.s||1),pv=sg*.2*Lh;
+      for(let pass=0;pass<2;pass++){ // pass 0 = front half (head sways against the tail), pass 1 = rear half (swings with the tail beat)
+        ctx.save();ctx.translate(q.x,q.y);ctx.rotate(sg*st.pitch);
+        ctx.translate(pv,0);ctx.rotate(pass?bend:-bend*.3);ctx.translate(-pv,0);
+        const front=pass===0,x0=(front===(sg>0))?pv-3:-420,x1=(front===(sg>0))?420:pv+3;
+        ctx.beginPath();ctx.rect(x0,-300,x1-x0,600);ctx.clip();
+        ctx.translate(-q.x,-q.y);prevDraw(c);ctx.restore();
+      }
+    }
+  }finally{c.dir=od;window.__swTP=null}
+};
+/* ---- Wide roaming: schools follow a leader; free swimmers stay inside their depth band and the widened world ---- */
+const prevUpd=window.updateCreatures;
+window.updateCreatures=function(dt){
+  const lead=new Map();
+  for(const c of creatures){
+    if(!c.school||!c.__roam||c.motion==='static')continue;
+    const key=c.sp+'|'+c.school,L=lead.get(key);
+    if(!L){lead.set(key,c);continue}
+    if(!c.__off)c.__off={x:clamp(c.x-L.x,-70,70),y:clamp(c.y-L.y,-40,40)};
+    c.homeX=L.x+c.__off.x;c.homeY=L.y+c.__off.y;c.rangeX=26;c.rangeY=14;c.cruise=(L.cruise||70)*1.4;
+  }
+  const r=prevUpd.apply(this,arguments);
+  const d=dt||.016;
+  for(const c of creatures){
+    if(!c.__roam||c.motion==='static')continue;
+    if(c.x<-900)c.x=-900;else if(c.x>900)c.x=900;
+    const yb=c.__yb;if(yb){if(c.y<yb[0])c.y+=(yb[0]-c.y)*Math.min(1,d*4);else if(c.y>yb[1])c.y+=(yb[1]-c.y)*Math.min(1,d*4)}
+  }
+  return r;
+};
+try{drawCreature=window.drawCreature;updateCreatures=window.updateCreatures}catch(e){}
 })();
 </script>
 </body>
