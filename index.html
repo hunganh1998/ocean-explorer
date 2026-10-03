@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="en" data-build="Ocean Explorer V40 FINAL">
 <head>
+  <!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CMKDVZX45K"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CMKDVZX45K');
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ocean Explorer — ScienceFirst Expedition · V40 Living Ocean Core · ScienceFirst</title>
@@ -4979,7 +4987,7 @@ window.__OCEAN_V29_READY=true;
         case 'ambush': s.targetX=hx+rx*.25*Math.sin(s.phase*.38);s.targetY=hy+ry*.18*Math.sin(s.phase*.3);break;
         case 'hide': s.targetX=hx+rx*.35*Math.sin(s.phase*.25);s.targetY=hy+ry*.25*Math.sin(s.phase*.33);break;
         case 'cleaning': {
-          const clients=creatures.filter(o=>o!==c&&Math.hypot(o.x-c.x)<145&&['grouper','cleaner','cleanershrimp','shark'].some(k=>o.sp.includes(k)));
+          const clients=creatures.filter(o=>o!==c&&Math.hypot(o.x-c.x)<145&&['grouper','cleaner','cleanershrimp','shark'].some(k=>String(o.sp||'').includes(k)));
           const cl=clients[0];s.targetX=cl?cl.x+Math.sin(s.phase)*24:hx+rx*Math.sin(s.phase*.5);s.targetY=cl?cl.y+Math.cos(s.phase)*18:hy+ry*Math.sin(s.phase*.6);break;
         }
         case 'resting': s.targetX=hx;s.targetY=hy;break;
@@ -7876,5 +7884,131 @@ body.oeSpeciesProfileOpen #v31RegionBioPanel.on{
 
   window.__OCEAN_V54_AUDIO={levels:LEVELS,refresh};
   window.__OCEAN_V54_AUDIO_READY=true;
+})();
+</script>
+
+<script id="ocean-v55-more-species">
+/* V55 · +12 species (Pacific, Indian, Atlantic, Arctic, Southern). Append-only; plugs into V45's art map (window.__V45.art),
+   so the swim patch, info-panel portrait and regional rosters work unchanged. Own vector renderers draw to gc() = game canvas / portrait / collection thumb. */
+(()=>{'use strict';if(window.__V55)return;window.__V55=1;
+const A=window.__V45?.art,V23=window.__OCEAN_V23,V22=window.__OCEAN_V22,WORLD=window.__OCEAN_V16_WORLD;if(!A||!V23||!WORLD)return;
+const SRC='FishBase · IUCN Red List · WoRMS · peer-reviewed literature',TAU=6.3,W='#f4f1e8';
+let live=false,G=null;const gc=()=>G||(live?ctx:document.getElementById('specimenPortrait').getContext('2d'));
+const sn=(a,b=1)=>{const t=window.__swTP;return t==null?Math.sin(time*a)*b:Math.sin(t*a)*b*window.__swAMP};
+const E=(g,x,y,a,b,r=0)=>{g.beginPath();g.ellipse(x,y,Math.abs(a)||.1,Math.abs(b)||.1,r,0,TAU);g.fill()};
+const P=(g,...p)=>{g.beginPath();for(let i=0;i<p.length;i+=2)i?g.lineTo(p[i],p[i+1]):g.moveTo(p[i],p[i+1]);g.closePath();g.fill()};
+const eye=(g,x,y,r,c='#e8eee4')=>{g.fillStyle=c;E(g,x,y,r,r);g.fillStyle='#0a0f12';E(g,x+r*.2,y,r*.62,r*.62);g.fillStyle='#fff';E(g,x+r*.45,y-r*.3,r*.2,r*.2)};
+const grad=(g,h,s)=>{const q=g.createLinearGradient(0,-h,0,h);s.forEach(([o,c])=>q.addColorStop(o,c));return q};
+/* bony fish */
+function fsh(r){const g=gc(),L=r.L,h=r.h,tl=L*(r.tl||.4),ts=h*(r.ts||1.1),dh=h*(r.dh||.5),d=r.dfin||'low',fc=r.fin;
+ const body=()=>{g.beginPath();g.moveTo(L,0);g.bezierCurveTo(L*.7,-h*1.1,-L*.2,-h*1.25,-L*.8,-h*.22);g.lineTo(-L*.92,-h*.1);g.lineTo(-L*.92,h*.1);g.lineTo(-L*.8,h*.28);g.bezierCurveTo(-L*.2,h*1.15,L*.7,h*1.05,L,0);g.closePath()};
+ g.save();g.translate(-L*.88,0);g.rotate(sn(5,.3));g.fillStyle=r.tf||fc;g.beginPath();g.moveTo(0,-h*.12);
+ if(r.tail==='round'){g.quadraticCurveTo(-tl*1.2,-ts,-tl,0);g.quadraticCurveTo(-tl*1.2,ts,0,h*.12)}else{g.lineTo(-tl,-ts);g.quadraticCurveTo(-tl*.55,0,-tl,ts);g.lineTo(0,h*.12)}
+ g.fill();g.restore();g.fillStyle=fc;
+ if(d==='trig'){P(g,L*.52,-h*.9,L*.42,-h-dh*2,L*.3,-h*.9);P(g,L*.2,-h*.95,L*.1,-h-dh*.9,-L*.55,-h*.7,-L*.55,-h*.5)}
+ else if(d==='spiny'){g.strokeStyle=fc;g.lineWidth=1.6;for(let i=0;i<10;i++){const x=L*.45-i*L*.1;g.beginPath();g.moveTo(x,-h*.9);g.lineTo(x-L*.04,-h-dh*(1.3+Math.sin(i*.7)*.3));g.stroke()}g.globalAlpha=.45;P(g,L*.45,-h*.9,L*.4,-h-dh*1.2,-L*.5,-h-dh*1.2,-L*.5,-h*.8);g.globalAlpha=1}
+ else if(d==='tall')P(g,L*.4,-h*.9,L*.1,-h-dh*1.6,-L*.15,-h-dh,-L*.6,-h*.5);else P(g,L*.4,-h*.9,L*.1,-h-dh*1.1,-L*.55,-h*.6);
+ if(r.dsplit)P(g,-L*.3,-h*.7,-L*.45,-h-dh*.7,-L*.6,-h*.5);
+ P(g,-L*.15,h*.95,-L*.5,h*.8,-L*.42,h+dh*(d==='tall'?1.2:.8));
+ body();g.fillStyle=grad(g,h,[[0,r.back],[.5,r.mid],[.78,r.belly],[1,r.belly]]);g.fill();g.save();body();g.clip();
+ (r.bars||[]).forEach(([x,w,c])=>{g.fillStyle=c;g.fillRect(L*x-L*w/2,-h*1.4,L*w,h*2.8)});
+ (r.hs||[]).forEach(([y,t,c,x0=-.85,x1=.8])=>{g.fillStyle=c;g.fillRect(L*x0,h*y-h*t/2,L*(x1-x0),h*t)});
+ g.fillStyle=r.pc||'rgba(0,0,0,.3)';for(let i=0;i<(r.n||0);i++)E(g,(((i*37)%97)/97*1.5-.7)*L,(((i*53)%89)/89-.5)*h*1.6,r.sr||2,r.sr||2);
+ (r.dots||[]).forEach(([x,y,q,c])=>{g.fillStyle=c;E(g,L*x,h*y,q,q)});
+ const hl=g.createLinearGradient(0,-h,0,h*.2);hl.addColorStop(0,'rgba(255,255,255,.3)');hl.addColorStop(1,'rgba(255,255,255,0)');body();g.fillStyle=hl;g.fill();g.restore();
+ if(r.sn){g.fillStyle=r.sc||r.mid;P(g,L*.85,-h*.3,L*(.85+r.sn),-h*.1,L*(.85+r.sn),h*.1,L*.85,h*.35)}
+ if(r.chin){g.fillStyle=r.chin;E(g,L*.9,h*.38,h*.2,h*.13)}
+ g.strokeStyle='rgba(0,0,0,.3)';g.lineWidth=1.2;g.beginPath();g.arc(L*.42,0,h*.62,-1.1,1.1);g.stroke();
+ eye(g,L*.7,-h*.18,Math.max(2.2,h*(r.er||.2)),r.ec);
+ g.fillStyle=fc;g.globalAlpha=.75;E(g,L*.3,h*.3,L*.13,h*.2,.5+sn(6,.15));g.globalAlpha=1}
+/* sharks (incl. hammerhead) */
+function shk(r){const g=gc(),L=r.L,h=r.h,f=r.df||1,pf=r.pf||1;
+ const body=()=>{g.beginPath();g.moveTo(L,h*.12);g.bezierCurveTo(L*.8,-h*1.1,L*.1,-h*1.25,-L*.8,-h*.15);g.lineTo(-L*.82,h*.12);g.bezierCurveTo(-L*.1,h*1.05,L*.8,h*.95,L,h*.12);g.closePath()};
+ const fill=r.sharp?[[0,r.back],[.55,r.back],[.63,r.belly],[1,r.belly]]:[[0,r.back],[.5,r.mid||r.back],[.78,r.belly],[1,r.belly]];
+ g.save();g.translate(-L*.82,0);g.rotate(sn(3.2,.13));g.fillStyle=r.back;g.beginPath();g.moveTo(L*.1,-h*.1);g.lineTo(-L*.2,-h*2.4);g.quadraticCurveTo(-L*.1,-h*.9,-L*.3,-h*.12);g.lineTo(-L*.12,h*2.4*r.lo);g.lineTo(L*.1,h*.12);g.closePath();g.fill();
+ if(r.tip){g.fillStyle=r.tip;P(g,-L*.2,-h*2.4,-L*.11,-h*1.71,-L*.172,-h*1.83)}g.restore();
+ g.fillStyle=r.fin;P(g,-L*.45,h*.85,-L*.58,h*1.35,-L*.64,h*.8);P(g,-L*.45,-h*.8,-L*.5,-h*1.15,-L*.6,-h*.7);
+ body();g.fillStyle=grad(g,h,fill);g.fill();
+ if(r.n){g.save();body();g.clip();g.fillStyle=r.pc;for(let i=0;i<r.n;i++)E(g,(((i*37)%97)/97*1.4-.6)*L,(((i*53)%89)/89-.4)*h*.9,r.sr,r.sr);g.restore()}
+ if(r.hammer){g.save();g.translate(L*.95,h*.05);g.rotate(.42);g.fillStyle=grad(g,h*1.6,fill);E(g,0,0,h*.42,h*1.75);g.restore()}
+ g.fillStyle=r.fin;g.beginPath();g.moveTo(L*.28,-h*1.05);g.quadraticCurveTo(L*.12,-h*(1.05+f),L*.02,-h*(1.05+1.45*f));g.quadraticCurveTo(-L*.02,-h*1.5,-L*.14,-h*1);g.closePath();g.fill();
+ if(r.tip){g.fillStyle=r.tip;P(g,L*.02,-h*(1.05+1.45*f),L*.075,-h*(1.05+.85*f),-L*.01,-h*(1.05+.9*f))}
+ g.save();g.translate(L*.38,h*.62);g.rotate(.3+sn(2,.05));g.fillStyle=r.fin;g.beginPath();g.moveTo(0,0);g.quadraticCurveTo(-L*.12,h*1.4*pf,-L*.3,h*2*pf);g.lineTo(-L*.22,h*.1);g.fill();g.restore();
+ g.strokeStyle='rgba(0,0,0,.33)';g.lineWidth=1.1;for(let i=0;i<5;i++){g.beginPath();g.moveTo(L*(.52-i*.04),-h*.5);g.quadraticCurveTo(L*(.54-i*.04),-h*.1,L*(.5-i*.04),h*.3);g.stroke()}
+ g.strokeStyle='rgba(15,10,10,.65)';g.lineWidth=1.4;g.beginPath();g.moveTo(L*.98,h*.3);g.quadraticCurveTo(L*.86,h*.55,L*.7,h*.38);g.stroke();
+ if(r.teeth){g.fillStyle='#f2f0e6';for(let i=0;i<4;i++)P(g,L*(.93-i*.05),h*(.42+i*.03),L*(.9-i*.05),h*(.62+i*.02),L*(.88-i*.05),h*(.42+i*.03))}
+ if(r.hammer)eye(g,L*.95+h*.7,-h*1.5,h*.2,'#3a3a30');else eye(g,L*.8,-h*.2,Math.max(1.8,h*.13),r.ec||'#222')}
+/* eels / morays: travelling-wave spine */
+function eel(r){const g=gc(),L=r.L,w=r.w,N=30,ph=window.__swTP!=null?window.__swTP*2.6:time*(r.sp||1.7),am=r.am*(window.__swAMP||1),S=[];
+ for(let i=0;i<=N;i++){const u=i/N;S.push([L-2*L*u,am*(.18+.9*u)*Math.sin(6.3*r.wl*u-ph),w*(u<.1?.5+u*5:1)*(1-.88*u**2.6)])}
+ const top=[],bot=[],out=[],inn=[],nr=[];S.forEach((p,i)=>{const a=S[Math.max(0,i-1)],b=S[Math.min(N,i+1)],dx=b[0]-a[0],dy=b[1]-a[1],d=Math.hypot(dx,dy)||1,nx=-dy/d,ny=dx/d;nr.push([nx,ny]);
+  top.push([p[0]+nx*p[2],p[1]+ny*p[2]]);bot.push([p[0]-nx*p[2],p[1]-ny*p[2]]);out.push([p[0]+nx*(p[2]+w*r.fh*(1-i/N*.6)),p[1]+ny*(p[2]+w*r.fh*(1-i/N*.6))]);inn.push([p[0]-nx*(p[2]+w*r.fh*(1-i/N*.6)),p[1]-ny*(p[2]+w*r.fh*(1-i/N*.6))])});
+ const path=()=>{g.beginPath();top.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));for(let i=N;i>=0;i--)g.lineTo(bot[i][0],bot[i][1]);g.closePath()};
+ g.fillStyle=r.fin;g.globalAlpha=.8;for(const [e,b] of [[out,top],[inn,bot]]){g.beginPath();for(let i=5;i<=N;i++)i>5?g.lineTo(e[i][0],e[i][1]):g.moveTo(e[i][0],e[i][1]);for(let i=N;i>=5;i--)g.lineTo(b[i][0],b[i][1]);g.closePath();g.fill()}g.globalAlpha=1;
+ path();g.fillStyle=grad(g,w+am,[[0,r.back],[.45,r.mid],[.8,r.belly],[1,r.belly]]);g.fill();
+ g.save();path();g.clip();g.fillStyle=r.pc||'transparent';for(let k=0;k<(r.n||0);k++){const u=.1+((k*.618)%1)*.88,i=Math.round(u*N),p=S[i],o=((((k*37)%11)/11)-.5)*1.5*p[2];E(g,p[0]+nr[i][0]*o,p[1]+nr[i][1]*o,r.sr*(1-u*.5),r.sr*(1-u*.5)*.8)}
+ const hl=g.createLinearGradient(0,-w-am,0,w*.3);hl.addColorStop(0,'rgba(255,255,255,.22)');hl.addColorStop(1,'rgba(255,255,255,0)');path();g.fillStyle=hl;g.fill();g.restore();
+ const e=S[2],n=nr[2];eye(g,e[0]+n[0]*e[2]*.35,e[1]+n[1]*e[2]*.35,Math.max(1.8,w*r.er));
+ if(r.gape){const o=(.5+.5*Math.sin(time*1.4))*r.gape*w,a=S[0],c=S[4];g.fillStyle='#3a1217';P(g,a[0],a[1],c[0],c[1]+w*.1,a[0]+w*.2,a[1]+o+w*.2);g.fillStyle='#f2efe2';for(let j=0;j<4;j++)P(g,a[0]-j*w*.35-w*.2,a[1]+w*.05,a[0]-j*w*.35-w*.3,a[1]+w*.05+o*.55,a[0]-j*w*.35-w*.4,a[1]+w*.05);
+  const q=S[Math.round(N*.16)];g.fillStyle=r.gc;E(g,q[0],q[1]+w*.15,w*.3*(1+.15*Math.sin(time*2)),w*.3)}
+ else{g.strokeStyle='rgba(20,15,10,.55)';g.lineWidth=1;g.beginPath();g.moveTo(S[0][0],S[0][1]+w*.1);g.lineTo(S[4][0],S[4][1]+w*.12);g.stroke()}}
+/* sea angel (Clione): translucent body, flapping parapodia, orange gut */
+function ang(r){const g=gc(),L=r.L,h=r.h,f=Math.sin(window.__swTP!=null?window.__swTP*3:time*5.5);
+ for(const s of[-1,1]){g.save();g.translate(L*.15,s*h*.1);g.rotate(s*(-.15-f*.55));g.fillStyle='rgba(205,228,255,.38)';g.strokeStyle='rgba(255,255,255,.55)';g.lineWidth=.7;g.beginPath();g.moveTo(0,0);g.bezierCurveTo(L*.1,s*h*.9,-L*.4,s*h*1.3,-L*.55,s*h*.45);g.bezierCurveTo(-L*.4,s*h*.2,-L*.15,0,0,0);g.fill();g.stroke();g.restore()}
+ const q=g.createLinearGradient(0,-h*.6,0,h*.6);q.addColorStop(0,'rgba(236,246,255,.65)');q.addColorStop(1,'rgba(176,205,235,.35)');g.fillStyle=q;g.beginPath();g.moveTo(L,0);g.bezierCurveTo(L*.9,-h*.75,L*.3,-h*.65,-L*.3,-h*.3);g.lineTo(-L,0);g.lineTo(-L*.3,h*.3);g.bezierCurveTo(L*.3,h*.65,L*.9,h*.75,L,0);g.fill();
+ const o=g.createRadialGradient(-L*.05,0,1,-L*.05,0,L*.4);o.addColorStop(0,'rgba(236,98,52,.95)');o.addColorStop(1,'rgba(214,80,44,.5)');g.fillStyle=o;E(g,-L*.05,0,L*.3,h*.3);
+ g.fillStyle='rgba(240,150,120,.8)';for(const s of[-1,1])E(g,L*(1+.03*Math.sin(time*4+s)),s*h*.18,L*.07,h*.1);g.fillStyle='#10161c';E(g,L*.7,-h*.22,h*.07,h*.07)}
+/* data: id|name|latin|taxonomy|group|diet|habitat|depth|size|identification|behaviour|adaptation|ecology|reproduction|conservation|style|emoji|colour|regions */
+const DATA=`
+clown_trigger|Clown triggerfish|Balistoides conspicillum|Actinopterygii → Balistidae|Fish|Sea urchins, crabs, molluscs and other hard-shelled invertebrates|Outer reef slopes, drop-offs and lagoon reefs of the tropical Indo-West Pacific|1–75 m|up to ~50 cm|Black body with large white spots on the lower half, yellow markings on the back and a yellow-orange band around the mouth.|Usually solitary and territorial; at night it wedges itself into a reef crevice.|Strong teeth crush shells and urchin tests. The first dorsal spine locks upright and is released by a small 'trigger' spine, which wedges the fish into crevices. It swims by rippling its second dorsal and anal fins.|As a predator of urchins and other hard-shelled prey it helps shape the reef's bottom-living invertebrate community.|Triggerfishes generally lay eggs in a bottom nest that a parent guards aggressively.|Collected for the aquarium trade and affected by reef degradation. Nest-guarding fish may bite, so give them space.|trigger|🐟|#2a2832|coral_triangle,great_barrier
+longnose_butterfly|Yellow longnose butterflyfish|Forcipiger flavissimus|Actinopterygii → Chaetodontidae|Fish|Small crustaceans and other invertebrates, including the tube feet of echinoderms|Coral reefs and rocky reefs of the tropical Indo-Pacific|0–145 m|up to ~22 cm|Bright yellow body, black cap on the upper head, silvery lower face, a long tweezer-like snout and a dark spot at the rear of the anal fin.|Picks small prey from narrow crevices; often seen alone or in pairs.|The elongated snout with a tiny mouth at the tip works like forceps (the genus name means forceps-bearer) and reaches prey that other fishes cannot.|Feeds on small bottom-living invertebrates, helping cycle reef productivity.|Egg-layer with planktonic larvae; butterflyfishes pass through a distinctive 'tholichthys' larval stage with bony head plates.|Widespread on Indo-Pacific reefs and sold in the aquarium trade; its fate is tied to reef health.|butterfly|🐠|#f2d12a|coral_triangle,maldives_reef
+reef_stonefish|Reef stonefish|Synanceia verrucosa|Actinopterygii → Synanceiidae|Fish|Small fishes and crustaceans|Reef flats, rubble, rocky and coral areas of the tropical Indo-West Pacific|0–40 m|up to ~40 cm|Warty, mottled brown-grey body that looks like an algae-covered rock, with small upward-facing eyes and mouth.|Sit-and-wait ambusher: lies motionless on rubble or reef and engulfs passing prey with a lightning-fast gulp.|Dorsal spines carry venom glands, making stonefishes among the most venomous fishes known. Camouflage and stillness are its main strategy.|Ambush predator of small fishes and crustaceans on shallow reefs.|Reproduction is poorly documented in the wild.|The main risk is to people: wear thick-soled reef shoes on reef flats and seek urgent medical care after any sting.|urchin|🪨|#7a6a52|coral_triangle,great_barrier
+giant_moray|Giant moray|Gymnothorax javanicus|Actinopterygii → Muraenidae|Fish|Fishes, crustaceans and octopus|Coral reefs, reef flats and lagoons of the Indo-Pacific, including the Red Sea|1–50 m|adults can exceed 2 m|Very large, heavy-bodied moray, yellowish-brown with dark mottling and a dark patch around the gill opening.|Mostly nocturnal; rests in crevices by day with its head out and mouth opening and closing, which is breathing, not threat. In the Red Sea it has been recorded hunting cooperatively with roving coral groupers, flushing prey out of crevices.|Like other morays it has a second set of jaws in the throat that lunges forward to drag prey into the gullet.|A top reef-crevice predator that links hidden prey to the open reef.|Eggs hatch into transparent, leaf-like leptocephalus larvae that drift in the plankton.|Large reef predators can carry ciguatera toxin. Never feed or provoke morays; bites are defensive.|urchin|🐍|#a2843c|coral_triangle,great_barrier,maldives_reef
+whitetip_reef_shark|Whitetip reef shark|Triaenodon obesus|Chondrichthyes → Carcharhinidae|Fish|Reef fishes, octopus and crustaceans|Coral reefs, lagoons and caves across the tropical Indo-Pacific|1–330 m|usually ~1.6 m, up to ~2 m|Slender grey shark with a short blunt snout and white tips on the first dorsal fin and upper tail lobe.|Rests in caves and under ledges by day and hunts at night, often probing crevices; sometimes feeds in packs.|Unlike many sharks it can rest motionless on the bottom because it pumps water over its gills.|Mesopredator that reaches fish hiding in reef crevices.|Viviparous: pups develop attached to a yolk-sac placenta and are born in small litters.|Vulnerable (IUCN 2020); declining because of fishing and habitat loss.|shark|🦈|#7d7970|coral_triangle,great_barrier,maldives_reef
+maldive_anemonefish|Maldive anemonefish|Amphiprion nigripes|Actinopterygii → Pomacentridae|Fish|Zooplankton, small invertebrates and some algae|Reef edges of the Maldives and Sri Lanka, living in host sea anemones|2–25 m|up to ~11 cm|Orange body with one white bar behind the eye; black pelvic and anal fins and belly give the species its name (nigripes = black foot).|Lives in an anemone with a breeding pair and a few juveniles; the female is the largest fish.|Protected from the host's stinging tentacles; like other clownfishes it is a sequential hermaphrodite (male first, the dominant fish becomes female).|Associated with the magnificent sea anemone (Heteractis magnifica), a mutualistic partnership.|Demersal eggs stick to rock beside the anemone; the male guards and fans them.|Least Concern (IUCN), but its range is small. Bleaching and loss of host anemones are the main risks.|clownfish|🐠|#e8762a|maldives_reef
+scalloped_hammerhead|Scalloped hammerhead|Sphyrna lewini|Chondrichthyes → Sphyrnidae|Fish|Fishes, squid, crustaceans and rays|Coastal and semi-oceanic tropical and warm-temperate waters, around islands and seamounts|≈ 0–275 m (dives deeper)|up to ~4 m|Broad, flattened head (cephalofoil) with a scalloped front edge and eyes at the tips; tall, swept first dorsal fin.|Forms large schools by day around seamounts and islands, then disperses to hunt at night.|The wide head spreads the electro-sensing ampullae of Lorenzini over a large area and gives a wide field of view.|Predator that links open water with island and seamount food webs.|Viviparous with a yolk-sac placenta; juveniles use shallow coastal nursery areas.|Critically Endangered (IUCN 2019), mainly from fishing and finning.|shark|🦈|#7b7f72|central_pacific
+opah|Opah (moonfish)|Lampris guttatus|Actinopterygii → Lampridae|Fish|Squid, small fishes and krill|Open ocean of tropical and temperate seas, in the twilight zone|50–400 m|up to ~2 m|Disc-shaped, silvery-blue body with white spots, bright red-orange fins and lips, and large eyes.|Cruises in cold deep water, flapping its pectoral fins almost continuously.|The first fish known with whole-body endothermy: pectoral muscles generate heat and countercurrent heat exchangers in the gills conserve it, keeping the body warmer than the water.|A warm-bodied predator in the cold mesopelagic zone.|Reproduction is poorly documented.|Caught as bycatch and in some longline fisheries; population data are limited.|opah|🐟|#4f6f8c|central_pacific
+great_white|Great white shark|Carcharodon carcharias|Chondrichthyes → Lamnidae|Fish|Seals, sea lions, fishes, rays, other sharks and carrion|Coastal and offshore temperate and subtropical seas|0–1,200 m|usually 3.4–4.9 m, up to ~6 m|Conical snout, slate-grey back sharply separated from a white belly, large serrated triangular teeth and a crescent tail with near-equal lobes.|Ambush hunter that often strikes pinnipeds from below; tagged sharks from California travel to a mid-Pacific area nicknamed the White Shark Café.|Regional endothermy keeps swimming muscles, gut and brain warmer than the water.|Apex predator that influences marine mammal and fish populations.|Pups develop inside the mother and are born live; litter size and gestation are not precisely known.|Vulnerable (IUCN); protected in many regions.|shark|🦈|#69767e|california_current,north_atlantic
+european_eel|European eel|Anguilla anguilla|Actinopterygii → Anguillidae|Fish|Invertebrates, fishes and carrion|Rivers, lakes, estuaries and coasts of Europe and North Africa; spawns in the Atlantic|0–50 m|females can exceed 1 m|Snake-like body with one continuous fin along back, tail and belly. Olive-brown or yellowish while growing; silvery with large eyes when migrating.|Nocturnal; hides by day. After many years, 'silver eels' stop feeding and migrate thousands of km through open ocean to spawn.|Can take up oxygen through the skin and cross wet ground briefly; tolerates both fresh and salt water.|Predator and scavenger linking freshwater, coastal and oceanic ecosystems.|Spawning has never been observed; larvae (leptocephali) are found in the Sargasso Sea, drift on currents, become glass eels, then elvers, yellow eels and silver eels.|Critically Endangered (IUCN). Threats include overfishing, dams and weirs, parasites, pollution and ocean change.|eel|🐍|#5d5a2c|north_atlantic
+sea_angel|Sea angel|Clione limacina|Mollusca → Gastropoda (Pteropoda)|Mollusc|Shelled pteropods (sea butterflies, Limacina)|Cold seas of the Arctic and subarctic, mainly the upper water column|0–100 m+|a few cm|Small translucent swimming sea slug with two wing-like parapodia and an orange-red gut visible through the body.|Flaps its 'wings' to swim and hover; hunts by extending tentacle-like buccal cones to seize prey.|Wing-like parapodia replace a foot for swimming; it has no shell.|Specialist predator of shelled pteropods; in turn food for other plankton feeders.|Simultaneous hermaphrodite (each animal has both sexes).|Its prey's thin shells are sensitive to ocean acidification, which could affect the food web.|seaangel|🪼|#c6dcf4|arctic_shelf
+blackfin_icefish|Blackfin icefish|Chaenocephalus aceratus|Actinopterygii → Channichthyidae|Fish|Krill and fishes|Bottom waters of the Southern Ocean: Scotia Sea, Bouvet Island and northern Antarctic Peninsula|5–770 m|up to ~72 cm|Elongated, scaleless, greyish body with a long flattened snout, a large mouth and a dark first dorsal fin; gills are white.|Bottom-dwelling ambush predator; young fish eat krill and larger fish switch to fishes.|Icefishes lack haemoglobin: colourless blood and a large heart move dissolved oxygen around in cold, oxygen-rich water. Antifreeze proteins prevent freezing.|Links krill to seals and penguins in the Antarctic food web.|Egg-layer; details of spawning are limited.|Narrow temperature tolerance makes it vulnerable to warming; taken as bycatch in icefish trawls.|icefish|🐟|#9a978c|antarctic_peninsula
+`;
+const K='id,name,latin,tax,group,diet,habitat,depth,size,fact,behavior,adapt,ecology,reproduction,conservation,style,emoji,color,regions'.split(',');
+const rows=DATA.trim().split('\n').map(l=>{const v=l.split('|'),o={};K.forEach((k,i)=>o[k]=v[i]);return o});
+const ART={clown_trigger:[fsh,{L:34,h:20,back:'#17161d',mid:'#23212b',belly:'#2d2b35',fin:'#25232c',tail:'round',tl:.3,dfin:'trig',dh:.7,hs:[[-.72,.3,'rgba(232,168,38,.9)',-.55,.5]],bars:[[.86,.12,'#f0e6c6']],chin:'#f0a820',dots:[[-.55,.45,3.2,W],[-.3,.55,3.6,W],[-.05,.5,3.4,W],[.2,.4,3,W],[-.7,.2,2.6,W],[-.4,.2,2.4,W],[-.15,.12,2.8,W],[.1,.05,2.4,W]],er:.1,ec:'#f2d36a'}],
+ longnose_butterfly:[fsh,{L:20,h:12.5,back:'#f2d12a',mid:'#f4d836',belly:'#efe9c4',fin:'#f1cf2c',tail:'round',tl:.3,dfin:'low',dh:.6,sn:.7,sc:'#d8d6cc',hs:[[-.62,.85,'#17161a',.35,1]],dots:[[-.62,.7,2.6,'#15141a']],er:.12}],
+ reef_stonefish:[fsh,{L:19,h:10,back:'#6f604b',mid:'#8a7960',belly:'#a29272',fin:'#76664d',tail:'round',tl:.25,dfin:'spiny',dh:.3,n:70,pc:'rgba(56,44,28,.5)',sr:2.4,dots:[[.5,-.4,3,'rgba(150,170,110,.5)'],[-.2,-.6,3.6,'rgba(150,170,110,.45)'],[-.5,.1,3,'rgba(190,120,70,.4)']],er:.07}],
+ maldive_anemonefish:[fsh,{L:14,h:8,back:'#e8762a',mid:'#ee8a37',belly:'#f09a4c',fin:'#d9661e',tail:'round',tl:.3,dfin:'low',dh:.5,bars:[[.45,.18,'#f4f1e6']],hs:[[.85,.5,'#17151a',-.45,.35]],er:.17}],
+ opah:[fsh,{L:34,h:30,back:'#4f6f8c',mid:'#7e9db2',belly:'#d3a0a2',fin:'#e5472f',tail:'fork',tl:.3,ts:.9,dfin:'tall',dh:.5,n:34,pc:'rgba(255,255,255,.9)',sr:1.9,chin:'#e5472f',er:.13,ec:'#e9d28a'}],
+ blackfin_icefish:[fsh,{L:42,h:9,back:'#7f7c76',mid:'#b9b6ac',belly:'#e6e3da',fin:'#5a5852',tf:'#a09d93',tail:'round',tl:.3,dfin:'tall',dh:.55,dsplit:1,sn:.18,sc:'#b9b6ac',bars:[[.35,.1,'rgba(60,58,54,.35)'],[.05,.1,'rgba(60,58,54,.35)'],[-.25,.1,'rgba(60,58,54,.3)']],er:.13}],
+ great_white:[shk,{L:70,h:16,back:'#69767e',belly:'#f0efe9',sharp:1,fin:'#5d6a72',lo:.85,df:1.2,teeth:1}],
+ whitetip_reef_shark:[shk,{L:42,h:6.6,back:'#7d7970',mid:'#8c887e',belly:'#d9d6cb',fin:'#77736a',tip:'#f4f2ea',lo:.5,df:.9,n:12,pc:'rgba(40,38,34,.45)',sr:1.1,ec:'#a9b48a'}],
+ scalloped_hammerhead:[shk,{L:60,h:9.5,back:'#7b7f72',mid:'#8c9084',belly:'#e6e4d8',fin:'#6e7266',lo:.45,df:1.5,hammer:1,pf:1.1}],
+ european_eel:[eel,{L:62,h:10,w:5.4,am:6,wl:1,back:'#2c2a1b',mid:'#5d5a2c',belly:'#d6cf86',fin:'#4a4624',fh:.35,er:.16}],
+ giant_moray:[eel,{L:60,h:11,w:7.2,am:5,wl:.9,back:'#6f5a30',mid:'#a2843c',belly:'#c4aa66',fin:'#8a7038',fh:.35,n:34,pc:'rgba(48,34,18,.55)',sr:2.6,er:.1,gape:.7,gc:'#2a1a10',sp:1.1}],
+ sea_angel:[ang,{L:22,h:9}]};
+Object.assign(A,ART);
+/* register species + regional rosters (same pattern as V45) */
+const R=V23.regions||{},MALD=[];
+for(const o of rows){const rec={id:o.id,name:o.name,latin:o.latin,group:o.group,diet:o.diet,habitat:o.habitat,depth:o.depth,size:o.size,fact:o.fact,behavior:o.behavior,adaptation:o.adapt,adapt:o.adapt,ecology:o.ecology,reproduction:o.reproduction,conservation:o.conservation,source:SRC,style:o.style,emoji:o.emoji,color:o.color,taxonomy:o.tax};
+ const f=species.find(s=>s.id===o.id);f?Object.assign(f,rec):species.push(rec);if(V23.species&&V23.species!==species&&!V23.species.some(s=>s.id===o.id))V23.species.push(rec);
+ for(const rg of o.regions.split(',')){if(rg==='maldives_reef'){MALD.push(o.id);continue}
+  if(R[rg]&&!R[rg].includes(o.id))R[rg].push(o.id);const w=WORLD.regions?.[rg];if(w&&Array.isArray(w.species)&&!w.species.some(x=>x[0]===o.id))w.species.push([o.id,.6,'curated regional roster']);
+  const g=V22?.regions?.[rg];if(g&&Array.isArray(g.roster)&&!g.roster.includes(o.id))g.roster.push(o.id)}}
+setInterval(()=>{if(WORLD.state?.regionId!=='maldives_reef')return;MALD.forEach((id,i)=>{if(creatures.some(c=>c.sp===id))return;const big=id==='whitetip_reef_shark',st=species.find(s=>s.id===id)?.style,sta=st==='urchin';
+ for(let j=0;j<(big?1:2);j++){const x=-300+i*110+j*50,y=-60+(i%3)*50+j*14;creatures.push({sp:id,x,y,vx:0,vy:0,s:big?1.1:.85+.1*j,seed:9300+i*7+j,motion:sta?'static':big?'large':'fish',homeX:x,homeY:y,rangeX:big?260:150,rangeY:big?90:55,speed:big?.35:.4,dir:j%2?-1:1,phase:Math.random()*6.28,_v21Region:'maldives_reef'})}})},1500);
+try{V23.rebuild?.()}catch(e){}
+/* live flag (game canvas vs. portrait) */
+const D=window.drawCreature;window.drawCreature=function(){live=true;try{return D.apply(this,arguments)}finally{live=false}};try{drawCreature=window.drawCreature}catch(e){}
+/* collection thumbnails */
+const mine=new Map(rows.map(o=>[o.name,o.id]));
+function paint(cv,id){const[fn,r]=A[id],g=cv.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,cv.width,cv.height);G=g;g.save();g.translate(cv.width/2,cv.height/2);const s=Math.min(cv.width*.42/r.L,cv.height*.3/r.h,9);g.scale(s,s);try{fn(r)}catch(e){}g.restore();G=null}
+function deco(){const grid=document.getElementById('speciesGrid');if(!grid)return;
+ grid.querySelectorAll('.card:not(.locked)').forEach(card=>{const h=card.querySelector('h3'),id=h&&mine.get(h.textContent.trim()),host=id&&card.querySelector('.emoji');if(!host||host.dataset.v55)return;host.dataset.v55=1;
+  let cv=host.querySelector('canvas');if(!cv){host.dataset.oeFishArt='1';host.classList.add('oeFishThumbHost');host.textContent='';const w=document.createElement('span');w.className='oeFishThumb';cv=document.createElement('canvas');cv.className='oeFishThumbCanvas';cv.width=152;cv.height=72;w.appendChild(cv);host.appendChild(w)}
+  paint(cv,id)})}
+const grid=document.getElementById('speciesGrid');if(grid)new MutationObserver(()=>setTimeout(deco,0)).observe(grid,{childList:true,subtree:true});
+document.getElementById('encySearch')?.addEventListener('input',()=>setTimeout(deco,0),true);
+window.__V55={species:rows.length,paint,ids:rows.map(o=>o.id)};
 })();
 </script>
